@@ -7,7 +7,9 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import { formatDateTime, isValidUtr, submitActivationUtr } from '../lib/storage';
+import { PLATFORM_OWNER_CONFIG } from '../config/platform';
+import { validateStrictActivationUtr } from '../lib/fampaySync';
+import { formatDateTime, submitActivationUtr } from '../lib/storage';
 import { ClientAccount } from '../types';
 import { ClientStatusLabel } from './StatusIndicator';
 
@@ -35,14 +37,14 @@ export function ConciergeGatewayCard({
     e.preventDefault();
     setUtrError('');
     setUtrUpdated(false);
-    const cleaned = utrInput.replace(/\s+/g, '');
-    if (!isValidUtr(cleaned)) {
-      setUtrError('Enter a valid 12-digit numeric UPI UTR / Reference Number.');
+    const check = validateStrictActivationUtr(utrInput);
+    if (!check.valid) {
+      setUtrError(check.error || 'Enter a valid 12-digit numeric UPI UTR / Reference Number.');
       return;
     }
     setSavingUtr(true);
     try {
-      await submitActivationUtr(client.id, cleaned);
+      await submitActivationUtr(client.id, check.cleaned);
       setUtrUpdated(true);
       setShowUtrEditor(false);
       onRefresh();
@@ -86,8 +88,8 @@ export function ConciergeGatewayCard({
 
             <p className="text-sm text-slate-300 leading-relaxed max-w-xl">
               {isVerified
-                ? `Your ₹499 lifetime license for ${client.entityName} is confirmed. Our engineering team is preparing your custom-branded UPI checkout setup and will contact you at ${client.email} shortly.`
-                : `Thank you for submitting your ₹499 lifetime payment for ${client.entityName}. Once our team completes verification (within 24 hours), we will contact you at ${client.email} with your personalized payment gateway.`}
+                ? `Your ₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} lifetime license for ${client.entityName} is confirmed. Our engineering team is preparing your custom-branded UPI checkout setup and will contact you at ${client.email} shortly.`
+                : `Thank you for submitting your ₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} lifetime payment for ${client.entityName}. Once our team completes verification (within 24 hours), we will contact you at ${client.email} with your personalized payment gateway.`}
             </p>
 
             <div className="pt-2 flex flex-wrap items-center gap-5 text-xs text-slate-300">
@@ -319,14 +321,17 @@ export function ConciergeGatewayCard({
                 {isVerified ? (
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                 ) : (
-                  <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span className="relative flex h-2.5 w-2.5 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500" />
+                  </span>
                 )}
-                2. ₹499 License Verification
+                2. ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} License Verification
               </div>
               <p className="text-xs text-slate-600 leading-relaxed">
                 {isVerified
-                  ? 'Payment verified and lifetime license approved.'
-                  : 'Payment reference received. Verification may take up to 24 hours.'}
+                  ? `₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} payment verified via bank sync and lifetime license activated.`
+                  : `Verifying payment via bank sync... This page unlocks automatically once ₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} is confirmed.`}
               </p>
             </div>
 
@@ -363,7 +368,7 @@ export function ConciergeGatewayCard({
               </p>
             </div>
             <div>
-              <p className="text-slate-500">₹499 Payment Reference</p>
+              <p className="text-slate-500">₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Payment Reference</p>
               <p className="font-mono font-semibold text-slate-900 mt-1 tabular-nums">
                 {client.activationUtr || 'Submitted'}
               </p>

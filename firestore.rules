@@ -12,6 +12,10 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidUtrId(utr) {
+      return utr is string && utr.size() == 12 && utr.matches('^[0-9]{12}$');
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -105,7 +109,7 @@ service cloud.firestore {
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
         && data.status in ['UNPAID', 'PENDING_VERIFICATION', 'ACTIVE', 'REJECTED']
         && (!('gatewayConfig' in data) || data.gatewayConfig == null || isValidGatewayConfig(data.gatewayConfig))
-        && (!('activationUtr' in data) || (data.activationUtr is string && data.activationUtr.size() >= 4 && data.activationUtr.size() <= 32))
+        && (!('activationUtr' in data) || isValidUtrId(data.activationUtr))
         && (!('activationSubmittedAt' in data) || (data.activationSubmittedAt is string && data.activationSubmittedAt.size() <= 64))
         && (!('activatedAt' in data) || (data.activatedAt is string && data.activatedAt.size() <= 64))
         && (!('rejectedReason' in data) || (data.rejectedReason is string && data.rejectedReason.size() <= 500))
@@ -151,6 +155,57 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidUsedUtr(data, utrId) {
+      return data.keys().hasAll(['utr', 'clientId', 'amount', 'activatedAt', 'createdAt'])
+        && data.keys().hasOnly(['utr', 'clientId', 'amount', 'activatedAt', 'createdAt'])
+        && isValidUtrId(data.utr) && data.utr == utrId
+        && data.clientId is string && isValidId(data.clientId)
+        && data.amount is number && data.amount == 1
+        && data.activatedAt is string && data.activatedAt.size() >= 10 && data.activatedAt.size() <= 64
+        && data.createdAt is timestamp;
+    }
+
+    function isValidFamPayAlert(data, alertId) {
+      return data.keys().hasAll([
+          'utr',
+          'amount',
+          'sender_email',
+          'raw_subject',
+          'received_at',
+          'matched',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'utr',
+          'amount',
+          'sender_email',
+          'raw_subject',
+          'received_at',
+          'matched',
+          'matchedClientId',
+          'matchedAt',
+          'createdAt'
+        ])
+        && isValidUtrId(data.utr) && data.utr == alertId
+        && data.amount is number && data.amount > 0 && data.amount <= 10000000
+        && data.sender_email is string && data.sender_email.size() >= 1 && data.sender_email.size() <= 254
+        && data.raw_subject is string && data.raw_subject.size() >= 1 && data.raw_subject.size() <= 300
+        && data.received_at is string && data.received_at.size() >= 10 && data.received_at.size() <= 64
+        && data.matched is bool
+        && (!('matchedClientId' in data) || isValidId(data.matchedClientId))
+        && (!('matchedAt' in data) || (data.matchedAt is string && data.matchedAt.size() <= 64))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSyncConfig(data, settingId) {
+      return data.keys().hasAll(['id', 'notificationEmail', 'vercelAppUrl', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'notificationEmail', 'vercelAppUrl', 'updatedAt'])
+        && data.id is string && data.id == settingId && isValidId(data.id)
+        && data.notificationEmail is string && data.notificationEmail.size() <= 254
+        && data.vercelAppUrl is string && data.vercelAppUrl.size() <= 500
+        && data.updatedAt is timestamp;
+    }
+
     // --- Collection Rules ---
 
     // Connectivity probe document (single read-only non-PII doc)
@@ -164,6 +219,106 @@ service cloud.firestore {
       allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
       allow list: if isAdminToken();
       allow create, update, delete: if false;
+    }
+
+    // Admin-only Sync Settings
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && isAdmin();
+      allow list: if isAdminToken();
+      allow create: if isAdmin()
+        && isValidId(settingId)
+        && isValidSyncConfig(incoming(), settingId)
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(settingId)
+        && isValidSyncConfig(incoming(), settingId)
+        && incoming().id == existing().id
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'notificationEmail',
+          'vercelAppUrl',
+          'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    // Immutable Anti-Fraud Registry of Used ₹1 Activation UTRs
+    match /used_utrs/{utrId} {
+      allow get: if isValidUtrId(utrId) && isSignedIn();
+      allow list: if isAdminToken();
+      allow create: if isSignedIn()
+        && isValidUtrId(utrId)
+        && isValidUsedUtr(incoming(), utrId)
+        && incoming().createdAt == request.time
+        && (
+          isAdmin()
+          || (
+            incoming().clientId == request.auth.uid
+            && incoming().amount == 1
+            && get(/databases/$(database)/documents/fampay_alerts/$(utrId)).data.amount == 1
+            && get(/databases/$(database)/documents/fampay_alerts/$(utrId)).data.matched == false
+            && get(/databases/$(database)/documents/clients/$(request.auth.uid)).data.status != 'ACTIVE'
+            && getAfter(/databases/$(database)/documents/clients/$(request.auth.uid)).data.status == 'ACTIVE'
+            && getAfter(/databases/$(database)/documents/clients/$(request.auth.uid)).data.activationUtr == utrId
+          )
+        );
+      allow update, delete: if false;
+    }
+
+    // FamPay Alerts for Automated ₹1 UTR Verification
+    match /fampay_alerts/{alertId} {
+      allow get: if isValidUtrId(alertId) && (
+        isAdmin()
+        || (
+          isSignedIn()
+          && (
+            resource == null
+            || existing().matched == false
+            || existing().matchedClientId == request.auth.uid
+          )
+        )
+      );
+      allow list: if isAdminToken();
+      allow create: if isAdmin()
+        && isValidUtrId(alertId)
+        && isValidFamPayAlert(incoming(), alertId)
+        && incoming().createdAt == request.time;
+      allow update: if isSignedIn()
+        && isValidUtrId(alertId)
+        && isValidFamPayAlert(incoming(), alertId)
+        && incoming().utr == existing().utr
+        && incoming().amount == existing().amount
+        && incoming().sender_email == existing().sender_email
+        && incoming().raw_subject == existing().raw_subject
+        && incoming().received_at == existing().received_at
+        && incoming().createdAt == existing().createdAt
+        && (
+          (
+            isAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'matched',
+              'matchedClientId',
+              'matchedAt'
+            ])
+          )
+          || (
+            existing().amount == 1
+            && existing().matched == false
+            && incoming().matched == true
+            && ('matchedClientId' in incoming())
+            && incoming().matchedClientId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'matched',
+              'matchedClientId',
+              'matchedAt'
+            ])
+            && existsAfter(/databases/$(database)/documents/used_utrs/$(alertId))
+            && get(/databases/$(database)/documents/clients/$(request.auth.uid)).data.status != 'ACTIVE'
+            && getAfter(/databases/$(database)/documents/clients/$(request.auth.uid)).data.status == 'ACTIVE'
+            && getAfter(/databases/$(database)/documents/clients/$(request.auth.uid)).data.activationUtr == alertId
+          )
+        );
+      allow delete: if false;
     }
 
     // Merchant Client Accounts (PII-isolated to owner or verified platform admin)
@@ -192,7 +347,7 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Admin Verification (Approve or Reject ₹499 Activation)
+          // Action 1: Admin Verification (Approve or Reject ₹1 Activation)
           (
             isAdmin()
             && incoming().status in ['ACTIVE', 'REJECTED', 'PENDING_VERIFICATION']
@@ -214,12 +369,13 @@ service cloud.firestore {
             ])
           )
           ||
-          // Action 3: Owner submits ₹499 Activation UTR (blocked once terminal ACTIVE)
+          // Action 3: Owner submits unused 12-digit ₹1 Activation UTR (blocked once terminal ACTIVE)
           (
             isOwner(clientId)
             && existing().status != 'ACTIVE'
             && incoming().status == 'PENDING_VERIFICATION'
             && ('activationUtr' in incoming())
+            && isValidUtrId(incoming().activationUtr)
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'activationUtr',
               'activationSubmittedAt',
@@ -227,6 +383,31 @@ service cloud.firestore {
               'rejectedReason',
               'updatedAt'
             ])
+            && !exists(/databases/$(database)/documents/used_utrs/$(incoming().activationUtr))
+          )
+          ||
+          // Action 4: Instant Atomic Auto-Confirmation via Verified Unmatched ₹1 FamPay Alert
+          (
+            isOwner(clientId)
+            && existing().status != 'ACTIVE'
+            && incoming().status == 'ACTIVE'
+            && ('activationUtr' in incoming())
+            && isValidUtrId(incoming().activationUtr)
+            && ('activatedAt' in incoming())
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'activationUtr',
+              'activationSubmittedAt',
+              'activatedAt',
+              'status',
+              'rejectedReason',
+              'updatedAt'
+            ])
+            && !exists(/databases/$(database)/documents/used_utrs/$(incoming().activationUtr))
+            && get(/databases/$(database)/documents/fampay_alerts/$(incoming().activationUtr)).data.amount == 1
+            && get(/databases/$(database)/documents/fampay_alerts/$(incoming().activationUtr)).data.matched == false
+            && existsAfter(/databases/$(database)/documents/used_utrs/$(incoming().activationUtr))
+            && getAfter(/databases/$(database)/documents/fampay_alerts/$(incoming().activationUtr)).data.matched == true
+            && getAfter(/databases/$(database)/documents/fampay_alerts/$(incoming().activationUtr)).data.matchedClientId == clientId
           )
         );
 

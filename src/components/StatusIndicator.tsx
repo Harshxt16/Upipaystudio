@@ -1,4 +1,5 @@
 import { CheckCircle2, Clock, AlertCircle, CircleSlash } from 'lucide-react';
+import { PLATFORM_OWNER_CONFIG } from '../config/platform';
 import { ClientAccountStatus, OrderStatus } from '../types';
 
 interface ClientStatusProps {
@@ -33,7 +34,7 @@ export function ClientStatusLabel({ status }: ClientStatusProps) {
       return (
         <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 whitespace-nowrap">
           <CircleSlash className="w-3.5 h-3.5 shrink-0" />
-          Unpaid (₹499 Due)
+          Unpaid (₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Due)
         </span>
       );
   }

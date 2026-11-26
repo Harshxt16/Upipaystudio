@@ -16,11 +16,11 @@ import {
   Trash2,
 } from 'lucide-react';
 import { BRAND_ACCENT_PRESETS, PLATFORM_OWNER_CONFIG } from '../config/platform';
+import { validateStrictActivationUtr } from '../lib/fampaySync';
 import {
   buildUpiIntentUri,
   isValidOptionalUrl,
   isValidUpiId,
-  isValidUtr,
   submitActivationUtr,
   updateClientGatewayConfig,
 } from '../lib/storage';
@@ -150,7 +150,9 @@ export function ClientDashboard({
       onRefresh();
 
       if (client.status !== 'ACTIVE' && client.status !== 'PENDING_VERIFICATION') {
-        setSetupSavedMsg('Gateway details saved. Complete ₹499 activation and our team will contact you soon.');
+        setSetupSavedMsg(
+          `Gateway details saved. Complete ₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} activation and our team will contact you soon.`
+        );
         setActiveTab('activation');
       } else if (client.status === 'PENDING_VERIFICATION') {
         setSetupSavedMsg('Gateway details saved. Our team will contact you soon once your payment is verified.');
@@ -202,14 +204,14 @@ export function ClientDashboard({
   const handleActivationSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setActivationError('');
-    const cleaned = activationUtr.replace(/\s+/g, '');
-    if (!isValidUtr(cleaned)) {
-      setActivationError('Enter a valid 12-digit numeric UPI UTR / Reference Number.');
+    const check = validateStrictActivationUtr(activationUtr);
+    if (!check.valid) {
+      setActivationError(check.error || 'Enter a valid 12-digit numeric UPI UTR / Reference Number.');
       return;
     }
     setSubmittingActivation(true);
     try {
-      await submitActivationUtr(client.id, cleaned);
+      await submitActivationUtr(client.id, check.cleaned);
       onRefresh();
     } catch (err) {
       setActivationError(err instanceof Error ? err.message : 'Failed to submit UTR.');
@@ -221,10 +223,16 @@ export function ClientDashboard({
   const handleActivationUpiAppConfirm = async (e: FormEvent) => {
     e.preventDefault();
     setActivationError('');
-    const cleaned = activationAppUtr.replace(/\s+/g, '');
+    const check = validateStrictActivationUtr(activationAppUtr);
+    if (!check.valid) {
+      setActivationError(
+        check.error || 'Enter the 12-digit UPI UTR / Reference Number shown in your UPI app receipt.'
+      );
+      return;
+    }
     setSubmittingActivation(true);
     try {
-      await submitActivationUtr(client.id, isValidUtr(cleaned) ? cleaned : 'UPI-APP-PAID');
+      await submitActivationUtr(client.id, check.cleaned);
       onRefresh();
     } catch (err) {
       setActivationError(err instanceof Error ? err.message : 'Failed to confirm payment.');
@@ -235,7 +243,7 @@ export function ClientDashboard({
 
   const navItems: { id: DashboardTab; label: string; icon: typeof Settings2; locked?: boolean }[] = [
     { id: 'setup', label: 'Gateway Setup', icon: Settings2 },
-    { id: 'activation', label: 'Lifetime License (₹499)', icon: CreditCard },
+    { id: 'activation', label: `Lifetime License (₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr})`, icon: CreditCard },
     {
       id: 'gateway',
       label: 'Personalized Gateway',
@@ -536,10 +544,10 @@ export function ClientDashboard({
                   <div className="pb-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
                       <h1 className="font-display text-xl font-bold text-slate-900">
-                        ₹499 Lifetime Gateway Activation
+                        ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Lifetime Gateway Activation
                       </h1>
                       <p className="text-sm text-slate-500 mt-1">
-                        Complete the one-time ₹499 payment and our team will contact you soon with your personalized payment gateway.
+                        Complete the one-time ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} payment and our team will contact you soon with your personalized payment gateway.
                       </p>
                     </div>
                     <ClientStatusLabel status={client.status} />
@@ -668,7 +676,7 @@ export function ClientDashboard({
                             </button>
 
                             <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 leading-relaxed">
-                              <strong>Note:</strong> After paying ₹499 via QR, enter your 12-digit UTR number below. Verification may take up to <strong>24 hours</strong>.
+                              <strong>Note:</strong> After paying ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} via QR, enter your 12-digit UTR number below. Verification may take up to <strong>24 hours</strong>.
                             </div>
 
                             <form onSubmit={handleActivationSubmit} className="space-y-4">
@@ -764,27 +772,33 @@ export function ClientDashboard({
                                 htmlFor="activation-app-utr"
                                 className="block text-xs font-semibold text-slate-700 mb-1.5"
                               >
-                                12-Digit UTR (Optional if paid via UPI app)
+                                12-Digit UTR / Reference Number (From UPI Receipt)
                               </label>
                               <input
                                 id="activation-app-utr"
                                 type="text"
                                 inputMode="numeric"
                                 maxLength={12}
+                                required
                                 value={activationAppUtr}
                                 onChange={(e) =>
                                   setActivationAppUtr(e.target.value.replace(/\D/g, '').slice(0, 12))
                                 }
-                                placeholder="Optional 12-digit UTR"
-                                className="w-full px-3.5 py-2.5 text-sm font-mono bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700 tabular-nums"
+                                placeholder="412345678901"
+                                className="w-full px-3.5 py-2.5 text-sm font-mono tracking-wider bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700 tabular-nums"
                               />
                             </div>
+                            {activationError && (
+                              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700">
+                                {activationError}
+                              </div>
+                            )}
                             <button
                               type="submit"
                               disabled={submittingActivation}
                               className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-60 rounded-lg cursor-pointer"
                             >
-                              {submittingActivation ? 'Confirming...' : 'Yes, Payment Completed'}
+                              {submittingActivation ? 'Verifying UTR...' : 'Verify & Confirm Payment'}
                             </button>
                           </form>
 
@@ -803,7 +817,7 @@ export function ClientDashboard({
                           <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-xs text-red-800">
                             <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
                             <p className="leading-relaxed">
-                              Payment was not completed in your UPI app, so your ₹499 lifetime order is <strong>not confirmed</strong>.
+                              Payment was not completed in your UPI app, so your ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} lifetime order is <strong>not confirmed</strong>.
                             </p>
                           </div>
 
@@ -845,14 +859,14 @@ export function ClientDashboard({
                     Personalized Gateway Locked Until Payment
                   </h2>
                   <p className="text-sm text-slate-600 max-w-md mx-auto">
-                    Complete the one-time ₹499 lifetime payment and our team will contact you soon with your personalized payment gateway.
+                    Complete the one-time ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} lifetime payment and our team will contact you soon with your personalized payment gateway.
                   </p>
                   <button
                     type="button"
                     onClick={() => setActiveTab('activation')}
                     className="px-5 py-2.5 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                   >
-                    Go to ₹499 Activation
+                    Go to ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Activation
                   </button>
                 </div>
               )}

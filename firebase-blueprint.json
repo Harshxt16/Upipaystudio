@@ -2,7 +2,7 @@
   "entities": {
     "ClientAccount": {
       "title": "ClientAccount",
-      "description": "Merchant account, onboarding status, ₹499 activation UTR, and personalized UPI gateway configuration.",
+      "description": "Merchant account, onboarding status, ₹1 activation UTR, and personalized UPI gateway configuration.",
       "type": "object",
       "properties": {
         "id": {
@@ -101,8 +101,10 @@
         },
         "activationUtr": {
           "type": "string",
-          "description": "12-digit UPI UTR or app confirmation reference for the ₹499 lifetime payment.",
-          "maxLength": 32
+          "description": "12-digit numeric UPI UTR reference for the ₹1 lifetime payment.",
+          "minLength": 12,
+          "maxLength": 12,
+          "pattern": "^[0-9]{12}$"
         },
         "activationSubmittedAt": {
           "type": "string",
@@ -209,6 +211,121 @@
         "updatedAt"
       ]
     },
+    "UsedUtr": {
+      "title": "UsedUtr",
+      "description": "Immutable anti-fraud registry of consumed 12-digit UTRs for ₹1 lifetime activations.",
+      "type": "object",
+      "properties": {
+        "utr": {
+          "type": "string",
+          "minLength": 12,
+          "maxLength": 12,
+          "pattern": "^[0-9]{12}$"
+        },
+        "clientId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "activatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["utr", "clientId", "amount", "activatedAt", "createdAt"]
+    },
+    "FamPayAlert": {
+      "title": "FamPayAlert",
+      "description": "Parsed FamPay payment credit alert used for exact ₹1 automated UTR verification.",
+      "type": "object",
+      "properties": {
+        "utr": {
+          "type": "string",
+          "minLength": 12,
+          "maxLength": 12,
+          "pattern": "^[0-9]{12}$"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "sender_email": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "raw_subject": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "matched": {
+          "type": "boolean"
+        },
+        "matchedClientId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "matchedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "utr",
+        "amount",
+        "sender_email",
+        "raw_subject",
+        "received_at",
+        "matched",
+        "createdAt"
+      ]
+    },
+    "FamPaySyncConfig": {
+      "title": "FamPaySyncConfig",
+      "description": "Platform owner configuration for separate FamPay notification Gmail and webhook setup.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "notificationEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "vercelAppUrl": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "notificationEmail", "vercelAppUrl", "updatedAt"]
+    },
     "AdminUser": {
       "title": "AdminUser",
       "description": "Platform owner administrator record.",
@@ -236,11 +353,23 @@
   "firestore": {
     "/clients/{clientId}": {
       "schema": { "$ref": "#/entities/ClientAccount" },
-      "description": "Stores merchant profiles, UPI gateway configs, and ₹499 activation UTR verification status. Scoped to owner UID or platform owner admin."
+      "description": "Stores merchant profiles, UPI gateway configs, and ₹1 activation UTR verification status. Scoped to owner UID or platform owner admin."
     },
     "/orders/{orderId}": {
       "schema": { "$ref": "#/entities/CustomerOrder" },
       "description": "Stores customer UPI order submissions scoped to clientId."
+    },
+    "/used_utrs/{utrId}": {
+      "schema": { "$ref": "#/entities/UsedUtr" },
+      "description": "Immutable registry of 12-digit UTRs already used for ₹1 lifetime account activations."
+    },
+    "/fampay_alerts/{alertId}": {
+      "schema": { "$ref": "#/entities/FamPayAlert" },
+      "description": "Parsed FamPay credit alerts keyed by 12-digit UTR for instant ₹1 auto-verification."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/FamPaySyncConfig" },
+      "description": "Admin-only configuration for separate FamPay Gmail sync settings."
     },
     "/admins/{adminId}": {
       "schema": { "$ref": "#/entities/AdminUser" },

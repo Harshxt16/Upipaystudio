@@ -4,6 +4,7 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -11,8 +12,20 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
-import { ClientAccount, CustomerOrder, GatewayConfig, OrderStatus } from '../types';
+import { PLATFORM_OWNER_CONFIG } from '../config/platform';
+import {
+  ActivationSubmitResult,
+  ClientAccount,
+  CustomerOrder,
+  FamPayAlertRecord,
+  FamPaySyncConfig,
+  GatewayConfig,
+  OrderStatus,
+  UsedUtrRecord,
+} from '../types';
+import { validateStrictActivationUtr } from './fampaySync';
 import { OperationType, db, handleFirestoreError } from './firebase';
 
 const CLIENTS_KEY = 'upipay_studio_clients_v1';
@@ -114,6 +127,30 @@ function mapOrderDoc(id: string, data: Record<string, unknown>): CustomerOrder {
     status: (data.status as OrderStatus) || 'PENDING_VERIFICATION',
     createdAt: timestampToIso(data.createdAt),
     updatedAt: timestampToIso(data.updatedAt),
+  };
+}
+
+function mapFamPayAlertDoc(id: string, data: Record<string, unknown>): FamPayAlertRecord {
+  return {
+    utr: typeof data.utr === 'string' ? data.utr : id,
+    amount: typeof data.amount === 'number' ? data.amount : 0,
+    sender_email: typeof data.sender_email === 'string' ? data.sender_email : '',
+    raw_subject: typeof data.raw_subject === 'string' ? data.raw_subject : '',
+    received_at: typeof data.received_at === 'string' ? data.received_at : timestampToIso(data.createdAt),
+    matched: Boolean(data.matched),
+    matchedClientId: typeof data.matchedClientId === 'string' ? data.matchedClientId : undefined,
+    matchedAt: typeof data.matchedAt === 'string' ? data.matchedAt : undefined,
+    createdAt: timestampToIso(data.createdAt),
+  };
+}
+
+function mapUsedUtrDoc(id: string, data: Record<string, unknown>): UsedUtrRecord {
+  return {
+    utr: typeof data.utr === 'string' ? data.utr : id,
+    clientId: typeof data.clientId === 'string' ? data.clientId : '',
+    amount: typeof data.amount === 'number' ? data.amount : PLATFORM_OWNER_CONFIG.lifetimeFeeInr,
+    activatedAt: typeof data.activatedAt === 'string' ? data.activatedAt : timestampToIso(data.createdAt),
+    createdAt: timestampToIso(data.createdAt),
   };
 }
 
@@ -303,17 +340,98 @@ export async function updateClientGatewayConfig(
   }
 }
 
-export async function submitActivationUtr(clientId: string, utr: string): Promise<void> {
+export async function submitActivationUtr(
+  clientId: string,
+  utr: string
+): Promise<ActivationSubmitResult> {
+  const validation = validateStrictActivationUtr(utr);
+  if (!validation.valid) {
+    throw new Error(validation.error || 'Enter a valid 12-digit numeric UPI UTR.');
+  }
+
+  const cleanedUtr = validation.cleaned;
+  const nowIso = new Date().toISOString();
+
+  // 1. Firestore Duplicate UTR Blocker (used_utrs collection)
+  const usedRef = doc(db, 'used_utrs', cleanedUtr);
+  let usedSnap;
+  try {
+    usedSnap = await getDoc(usedRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `used_utrs/${cleanedUtr}`);
+  }
+
+  if (usedSnap.exists()) {
+    throw new Error('Error: This UTR has already been used to activate another account.');
+  }
+
+  const expectedFee = PLATFORM_OWNER_CONFIG.lifetimeFeeInr;
+
+  // 2. Check if an unmatched fee FamPay alert already arrived for this UTR
+  const alertRef = doc(db, 'fampay_alerts', cleanedUtr);
+  let alertSnap;
+  try {
+    alertSnap = await getDoc(alertRef);
+  } catch {
+    alertSnap = null;
+  }
+
+  const alertData = alertSnap?.exists() ? (alertSnap.data() as Record<string, unknown>) : null;
+  const canInstantAutoConfirm =
+    Boolean(alertData) &&
+    alertData?.amount === expectedFee &&
+    alertData?.matched === false;
+
+  if (canInstantAutoConfirm) {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'clients', clientId), {
+      activationUtr: cleanedUtr,
+      activationSubmittedAt: nowIso,
+      activatedAt: nowIso,
+      status: 'ACTIVE',
+      rejectedReason: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(usedRef, {
+      utr: cleanedUtr,
+      clientId,
+      amount: expectedFee,
+      activatedAt: nowIso,
+      createdAt: serverTimestamp(),
+    });
+    batch.update(alertRef, {
+      matched: true,
+      matchedClientId: clientId,
+      matchedAt: nowIso,
+    });
+
+    try {
+      await batch.commit();
+      return {
+        status: 'ACTIVE',
+        autoConfirmed: true,
+        utr: cleanedUtr,
+      };
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `clients/${clientId}`);
+    }
+  }
+
+  // 3. Otherwise queue as PENDING_VERIFICATION for live onSnapshot auto-unlock or admin review
   const docPath = `clients/${clientId}`;
-  const cleanUtr = utr.trim().slice(0, 32);
   try {
     await updateDoc(doc(db, 'clients', clientId), {
-      activationUtr: cleanUtr,
-      activationSubmittedAt: new Date().toISOString(),
+      activationUtr: cleanedUtr,
+      activationSubmittedAt: nowIso,
       status: 'PENDING_VERIFICATION',
       rejectedReason: deleteField(),
       updatedAt: serverTimestamp(),
     });
+    return {
+      status: 'PENDING_VERIFICATION',
+      autoConfirmed: false,
+      utr: cleanedUtr,
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, docPath);
   }
@@ -321,10 +439,77 @@ export async function submitActivationUtr(clientId: string, utr: string): Promis
 
 export async function adminApproveClient(clientId: string): Promise<void> {
   const docPath = `clients/${clientId}`;
+  const nowIso = new Date().toISOString();
+
+  let clientSnap;
+  try {
+    clientSnap = await getDoc(doc(db, 'clients', clientId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, docPath);
+  }
+
+  if (!clientSnap.exists()) {
+    throw new Error('Client account not found.');
+  }
+
+  const clientData = clientSnap.data() as Record<string, unknown>;
+  const rawUtr = typeof clientData.activationUtr === 'string' ? clientData.activationUtr.trim() : '';
+  const hasStrictUtr = /^\d{12}$/.test(rawUtr);
+
+  if (hasStrictUtr) {
+    const usedRef = doc(db, 'used_utrs', rawUtr);
+    const usedSnap = await getDoc(usedRef);
+    if (usedSnap.exists()) {
+      const existingUsed = usedSnap.data() as Record<string, unknown>;
+      if (existingUsed.clientId !== clientId) {
+        throw new Error('Error: This UTR has already been used to activate another account.');
+      }
+    }
+
+    const alertRef = doc(db, 'fampay_alerts', rawUtr);
+    let alertSnap;
+    try {
+      alertSnap = await getDoc(alertRef);
+    } catch {
+      alertSnap = null;
+    }
+
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'clients', clientId), {
+      status: 'ACTIVE',
+      activatedAt: nowIso,
+      rejectedReason: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+    if (!usedSnap.exists()) {
+      batch.set(usedRef, {
+        utr: rawUtr,
+        clientId,
+        amount: PLATFORM_OWNER_CONFIG.lifetimeFeeInr,
+        activatedAt: nowIso,
+        createdAt: serverTimestamp(),
+      });
+    }
+    if (alertSnap?.exists() && (alertSnap.data() as Record<string, unknown>).matched === false) {
+      batch.update(alertRef, {
+        matched: true,
+        matchedClientId: clientId,
+        matchedAt: nowIso,
+      });
+    }
+
+    try {
+      await batch.commit();
+      return;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, docPath);
+    }
+  }
+
   try {
     await updateDoc(doc(db, 'clients', clientId), {
       status: 'ACTIVE',
-      activatedAt: new Date().toISOString(),
+      activatedAt: nowIso,
       rejectedReason: deleteField(),
       updatedAt: serverTimestamp(),
     });
@@ -347,6 +532,241 @@ export async function adminRejectClient(clientId: string, reason?: string): Prom
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, docPath);
   }
+}
+
+// --- FamPay Sync & Admin Alert Ledger ---
+
+export function subscribeFamPayAlertsForAdmin(
+  onData: (alerts: FamPayAlertRecord[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const collectionPath = 'fampay_alerts';
+  const q = query(collection(db, collectionPath), orderBy('createdAt', 'desc'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs.map((d) =>
+        mapFamPayAlertDoc(d.id, d.data() as Record<string, unknown>)
+      );
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, collectionPath);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export function subscribeUsedUtrsForAdmin(
+  onData: (utrs: UsedUtrRecord[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const collectionPath = 'used_utrs';
+  const q = query(collection(db, collectionPath), orderBy('createdAt', 'desc'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs.map((d) =>
+        mapUsedUtrDoc(d.id, d.data() as Record<string, unknown>)
+      );
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, collectionPath);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export function subscribeFamPaySyncConfig(
+  onData: (config: FamPaySyncConfig | null) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const docPath = 'settings/fampay_sync';
+  return onSnapshot(
+    doc(db, 'settings', 'fampay_sync'),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      const data = snap.data() as Record<string, unknown>;
+      onData({
+        id: snap.id,
+        notificationEmail:
+          typeof data.notificationEmail === 'string' ? data.notificationEmail : '',
+        vercelAppUrl: typeof data.vercelAppUrl === 'string' ? data.vercelAppUrl : '',
+        updatedAt: timestampToIso(data.updatedAt),
+      });
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, docPath);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function saveFamPaySyncConfig(input: {
+  notificationEmail: string;
+  vercelAppUrl: string;
+}): Promise<void> {
+  const docPath = 'settings/fampay_sync';
+  try {
+    await setDoc(doc(db, 'settings', 'fampay_sync'), {
+      id: 'fampay_sync',
+      notificationEmail: input.notificationEmail.trim().slice(0, 254),
+      vercelAppUrl: input.vercelAppUrl.trim().slice(0, 500),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, docPath);
+  }
+}
+
+export async function ingestFamPayAlertFromAdmin(input: {
+  utr: string;
+  amount: number;
+  sender_email: string;
+  raw_subject: string;
+  received_at?: string;
+}): Promise<{
+  matched: boolean;
+  autoActivatedClient: ClientAccount | null;
+  message: string;
+}> {
+  const validation = validateStrictActivationUtr(input.utr);
+  if (!validation.valid) {
+    throw new Error(validation.error || 'Invalid 12-digit UTR.');
+  }
+  const cleanedUtr = validation.cleaned;
+
+  if (!Number.isFinite(input.amount) || input.amount <= 0 || input.amount > 10000000) {
+    throw new Error('Extracted amount is invalid.');
+  }
+
+  const usedRef = doc(db, 'used_utrs', cleanedUtr);
+  const usedSnap = await getDoc(usedRef);
+  if (usedSnap.exists()) {
+    throw new Error('Error: This UTR has already been used to activate another account.');
+  }
+
+  const alertRef = doc(db, 'fampay_alerts', cleanedUtr);
+  const existingAlertSnap = await getDoc(alertRef);
+  if (existingAlertSnap.exists() && (existingAlertSnap.data() as Record<string, unknown>).matched === true) {
+    throw new Error('This FamPay alert has already been matched.');
+  }
+
+  const nowIso = new Date().toISOString();
+  const receivedAt = (input.received_at || nowIso).slice(0, 64);
+  const senderEmail = (input.sender_email.trim() || 'alerts@fampay.in').slice(0, 254);
+  const rawSubject = (input.raw_subject.trim() || 'FamPay Credit Alert').slice(0, 300);
+
+  const expectedFee = PLATFORM_OWNER_CONFIG.lifetimeFeeInr;
+
+  // Check if a client is currently PENDING_VERIFICATION with this exact UTR
+  let pendingClient: ClientAccount | null = null;
+  if (input.amount === expectedFee) {
+    const q = query(collection(db, 'clients'), where('activationUtr', '==', cleanedUtr));
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+      const mapped = mapClientDoc(d.id, d.data() as Record<string, unknown>);
+      if (mapped.status === 'PENDING_VERIFICATION') {
+        pendingClient = mapped;
+        break;
+      }
+    }
+  }
+
+  if (input.amount === expectedFee && pendingClient) {
+    const batch = writeBatch(db);
+    if (existingAlertSnap.exists()) {
+      batch.update(alertRef, {
+        matched: true,
+        matchedClientId: pendingClient.id,
+        matchedAt: nowIso,
+      });
+    } else {
+      batch.set(alertRef, {
+        utr: cleanedUtr,
+        amount: input.amount,
+        sender_email: senderEmail,
+        raw_subject: rawSubject,
+        received_at: receivedAt,
+        matched: true,
+        matchedClientId: pendingClient.id,
+        matchedAt: nowIso,
+        createdAt: serverTimestamp(),
+      });
+    }
+    batch.set(usedRef, {
+      utr: cleanedUtr,
+      clientId: pendingClient.id,
+      amount: expectedFee,
+      activatedAt: nowIso,
+      createdAt: serverTimestamp(),
+    });
+    batch.update(doc(db, 'clients', pendingClient.id), {
+      status: 'ACTIVE',
+      activatedAt: nowIso,
+      rejectedReason: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+
+    try {
+      await batch.commit();
+      return {
+        matched: true,
+        autoActivatedClient: {
+          ...pendingClient,
+          status: 'ACTIVE',
+          activatedAt: nowIso,
+        },
+        message: `Exact ₹${expectedFee} match found! Automatically activated ${pendingClient.entityName} (${pendingClient.email}) and locked UTR ${cleanedUtr} in used_utrs.`,
+      };
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `fampay_alerts/${cleanedUtr}`);
+    }
+  }
+
+  // Save unmatched alert for instant auto-confirm when client submits UTR (only exact fee eligible)
+  if (!existingAlertSnap.exists()) {
+    try {
+      await setDoc(alertRef, {
+        utr: cleanedUtr,
+        amount: input.amount,
+        sender_email: senderEmail,
+        raw_subject: rawSubject,
+        received_at: receivedAt,
+        matched: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `fampay_alerts/${cleanedUtr}`);
+    }
+  }
+
+  if (input.amount !== expectedFee) {
+    return {
+      matched: false,
+      autoActivatedClient: null,
+      message: `Saved alert to fampay_alerts with amount ₹${input.amount}, but Amount Lock prevented auto-activation (exact ₹${expectedFee} required).`,
+    };
+  }
+
+  return {
+    matched: false,
+    autoActivatedClient: null,
+    message: `Saved verified ₹${expectedFee} alert (${cleanedUtr}) to fampay_alerts. The next matching client submitting this UTR will unlock instantly.`,
+  };
 }
 
 // --- Firestore Orders Operations ---

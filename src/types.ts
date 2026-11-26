@@ -51,6 +51,39 @@ export interface CustomerOrder {
   updatedAt: string;
 }
 
+export interface UsedUtrRecord {
+  utr: string;
+  clientId: string;
+  amount: number;
+  activatedAt: string;
+  createdAt: string;
+}
+
+export interface FamPayAlertRecord {
+  utr: string;
+  amount: number;
+  sender_email: string;
+  raw_subject: string;
+  received_at: string;
+  matched: boolean;
+  matchedClientId?: string;
+  matchedAt?: string;
+  createdAt: string;
+}
+
+export interface FamPaySyncConfig {
+  id: string;
+  notificationEmail: string;
+  vercelAppUrl: string;
+  updatedAt: string;
+}
+
+export interface ActivationSubmitResult {
+  status: 'ACTIVE' | 'PENDING_VERIFICATION';
+  autoConfirmed: boolean;
+  utr: string;
+}
+
 export type AppView =
   | { type: 'landing' }
   | { type: 'dashboard' }

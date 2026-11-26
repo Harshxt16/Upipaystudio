@@ -219,7 +219,9 @@ export function LandingAuthView({
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-2 border-t border-slate-200">
               <div className="pt-4">
-                <p className="font-mono text-2xl font-semibold text-slate-900 tabular-nums">₹499</p>
+                <p className="font-mono text-2xl font-semibold text-slate-900 tabular-nums">
+                  ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr}
+                </p>
                 <p className="text-xs text-slate-500 mt-1">One-time lifetime setup fee</p>
               </div>
               <div className="pt-4">
@@ -529,10 +531,10 @@ export function LandingAuthView({
             <div className="p-6 border border-slate-200 rounded-xl bg-slate-50/50">
               <p className="font-mono text-xs font-semibold text-teal-700 mb-3">02. Activate</p>
               <h3 className="font-display text-lg font-bold text-slate-900">
-                One-time ₹499 lifetime unlock
+                One-time ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} lifetime unlock
               </h3>
               <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                Pay ₹499 once via UPI to {PLATFORM_OWNER_CONFIG.payeeName} and submit your 12-digit UTR for admin verification.
+                Pay ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} once via UPI to {PLATFORM_OWNER_CONFIG.payeeName} and submit your 12-digit UTR for admin verification.
               </p>
             </div>
 
@@ -614,7 +616,7 @@ export function LandingAuthView({
                 Lifetime Merchant License
               </p>
               <h2 className="font-display text-2xl sm:text-3xl font-bold text-slate-900">
-                ₹499 once, zero recurring fees
+                ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} once, zero recurring fees
               </h2>
               <p className="text-sm text-slate-600 leading-relaxed">
                 For creators, indie makers, and growing businesses who want direct UPI settlement with a personalized payment gateway built for them.
@@ -640,7 +642,9 @@ export function LandingAuthView({
             </div>
 
             <div className="shrink-0 border-t md:border-t-0 md:border-l border-slate-200 pt-6 md:pt-0 md:pl-8 flex flex-col items-start md:items-end">
-              <p className="font-mono text-4xl font-bold text-slate-900 tabular-nums">₹499</p>
+              <p className="font-mono text-4xl font-bold text-slate-900 tabular-nums">
+                ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr}
+              </p>
               <p className="text-xs text-slate-500 mt-1 mb-5">One-time via UPI</p>
               <a
                 href="#auth-panel"

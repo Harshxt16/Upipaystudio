@@ -2,9 +2,11 @@ export const PLATFORM_OWNER_CONFIG = {
   upiId: '8130799171@fam',
   payeeName: 'Harshit Singh',
   adminPassword: 'Harshit@1608',
-  lifetimeFeeInr: 499,
+  lifetimeFeeInr: 1,
   brandName: 'UPIPay Studio',
   qrMode: 'dynamic' as const,
+  fampayNotificationEmail: 'dhirajxstream@gmail.com',
+  vercelAppUrl: 'https://upipaystudio.vercel.app',
 };
 
 export const BRAND_ACCENT_PRESETS = [
