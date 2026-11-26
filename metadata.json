@@ -1,0 +1,6 @@
+{
+  "name": "UPIPay Studio",
+  "description": "Multi-tenant Direct UPI Payment Gateway studio for dynamic UPI intent links, QR codes, and zero-commission order verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
