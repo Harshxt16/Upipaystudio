@@ -1,16 +1,12 @@
 import { Component, ReactNode, useCallback, useEffect, useState } from 'react';
+import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { AdminDashboard } from './components/AdminDashboard';
 import { ClientDashboard } from './components/ClientDashboard';
 import { LandingAuthView } from './components/LandingAuthView';
 import { PublicGatewayView } from './components/PublicGatewayView';
 import { TopNav } from './components/TopNav';
-import {
-  getClients,
-  getCurrentClient,
-  getOrdersForClient,
-  setCurrentClientId,
-  subscribeToStorageSync,
-} from './lib/storage';
+import { auth } from './lib/firebase';
+import { subscribeClientAccount, subscribeOrdersForClient } from './lib/storage';
 import { AppView, ClientAccount, CustomerOrder } from './types';
 
 function parseRouteFromUrl(): AppView {
@@ -24,7 +20,10 @@ function parseRouteFromUrl(): AppView {
     return {
       type: 'gateway',
       slug: gatewaySlug.trim(),
-      amount: parsedAmount && !Number.isNaN(parsedAmount) && parsedAmount > 0 ? parsedAmount : undefined,
+      amount:
+        parsedAmount && !Number.isNaN(parsedAmount) && parsedAmount > 0
+          ? parsedAmount
+          : undefined,
       orderId,
       embed,
     };
@@ -35,53 +34,76 @@ function parseRouteFromUrl(): AppView {
     return { type: 'admin' };
   }
 
-  if (getCurrentClient()) {
-    return { type: 'dashboard' };
-  }
-
   return { type: 'landing' };
 }
 
 export default function App() {
   const [route, setRoute] = useState<AppView>(() => parseRouteFromUrl());
-  const [clients, setClients] = useState<ClientAccount[]>(() => getClients());
-  const [currentClient, setCurrentClient] = useState<ClientAccount | null>(() =>
-    getCurrentClient()
-  );
-  const [clientOrders, setClientOrders] = useState<CustomerOrder[]>(() => {
-    const c = getCurrentClient();
-    return c ? getOrdersForClient(c.id) : [];
-  });
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [currentClient, setCurrentClient] = useState<ClientAccount | null>(null);
+  const [clientResolved, setClientResolved] = useState(false);
+  const [clientOrders, setClientOrders] = useState<CustomerOrder[]>([]);
+  const [syncNonce, setSyncNonce] = useState(0);
 
   const refreshData = useCallback(() => {
-    const nextClients = getClients();
-    const nextCurrent = getCurrentClient();
-    setClients(nextClients);
-    setCurrentClient(nextCurrent);
-    setClientOrders(nextCurrent ? getOrdersForClient(nextCurrent.id) : []);
+    setSyncNonce((n) => n + 1);
   }, []);
 
   useEffect(() => {
-    const unsubscribe = subscribeToStorageSync(refreshData);
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+      setAuthReady(true);
+      if (!user) {
+        setCurrentClient(null);
+        setClientOrders([]);
+        setClientResolved(true);
+      } else {
+        setClientResolved(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!authReady || !authUser) return;
+
+    const unsubClient = subscribeClientAccount(
+      authUser.uid,
+      (client) => {
+        setCurrentClient(client);
+        setClientResolved(true);
+      },
+      () => {
+        setClientResolved(true);
+      }
+    );
+
+    return () => unsubClient();
+  }, [authReady, authUser, syncNonce]);
+
+  useEffect(() => {
+    if (!authReady || !authUser || !currentClient) {
+      setClientOrders([]);
+      return;
+    }
+
+    const unsubOrders = subscribeOrdersForClient(
+      currentClient.id,
+      (orders) => setClientOrders(orders),
+      () => setClientOrders([])
+    );
+
+    return () => unsubOrders();
+  }, [authReady, authUser, currentClient?.id]);
+
+  useEffect(() => {
     const onPopState = () => {
-      refreshData();
       setRoute(parseRouteFromUrl());
     };
-    const onFocusOrVisible = () => {
-      if (document.visibilityState === 'visible') {
-        refreshData();
-      }
-    };
     window.addEventListener('popstate', onPopState);
-    window.addEventListener('focus', refreshData);
-    document.addEventListener('visibilitychange', onFocusOrVisible);
-    return () => {
-      unsubscribe();
-      window.removeEventListener('popstate', onPopState);
-      window.removeEventListener('focus', refreshData);
-      document.removeEventListener('visibilitychange', onFocusOrVisible);
-    };
-  }, [refreshData]);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   const navigateUrl = (searchParams: Record<string, string | undefined>, nextRoute: AppView) => {
     try {
@@ -95,7 +117,6 @@ export default function App() {
     } catch {
       // Fallback to in-memory route state if history API is restricted
     }
-    refreshData();
     setRoute(nextRoute);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -121,7 +142,7 @@ export default function App() {
   };
 
   const handleNavigateDashboard = () => {
-    if (getCurrentClient()) {
+    if (currentClient) {
       navigateUrl({}, { type: 'dashboard' });
     } else {
       navigateUrl({}, { type: 'landing' });
@@ -132,9 +153,10 @@ export default function App() {
     navigateUrl({ view: 'admin' }, { type: 'admin' });
   };
 
-  const handleLogout = () => {
-    setCurrentClientId(null);
-    refreshData();
+  const handleLogout = async () => {
+    await signOut(auth);
+    setCurrentClient(null);
+    setClientOrders([]);
     navigateUrl({}, { type: 'landing' });
   };
 
@@ -153,8 +175,7 @@ export default function App() {
         initialOrderId={route.orderId}
         embed={route.embed}
         onExitGateway={() => {
-          refreshData();
-          if (getCurrentClient()) {
+          if (currentClient) {
             handleNavigateDashboard();
           } else {
             handleNavigateLanding();
@@ -167,9 +188,11 @@ export default function App() {
   const resolvedView: 'landing' | 'dashboard' | 'admin' =
     route.type === 'admin'
       ? 'admin'
-      : route.type === 'dashboard' && currentClient
+      : currentClient
       ? 'dashboard'
       : 'landing';
+
+  const isLoadingSession = !authReady || (Boolean(authUser) && !clientResolved && resolvedView !== 'admin');
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -182,33 +205,36 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {resolvedView === 'admin' && (
-        <AdminDashboard
-          clients={clients}
-          onRefresh={refreshData}
-          onOpenGateway={(slug) => handleOpenLiveGateway(slug)}
-        />
-      )}
+      {isLoadingSession ? (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
+          <p className="text-sm font-medium text-slate-500">Connecting to UPIPay Studio...</p>
+        </div>
+      ) : (
+        <>
+          {resolvedView === 'admin' && <AdminDashboard authUser={authUser} />}
 
-      {resolvedView === 'dashboard' && currentClient && (
-        <ClientDashboard
-          key={currentClient.id}
-          client={currentClient}
-          orders={clientOrders}
-          onOpenLiveGateway={handleOpenLiveGateway}
-          onRefresh={refreshData}
-        />
-      )}
+          {resolvedView === 'dashboard' && currentClient && (
+            <ClientDashboard
+              key={currentClient.id}
+              client={currentClient}
+              orders={clientOrders}
+              onOpenLiveGateway={handleOpenLiveGateway}
+              onRefresh={refreshData}
+            />
+          )}
 
-      {resolvedView === 'landing' && (
-        <LandingAuthView
-          onAuthenticated={(client) => {
-            refreshData();
-            setCurrentClient(client);
-            navigateUrl({}, { type: 'dashboard' });
-          }}
-          onOpenAdmin={handleNavigateAdmin}
-        />
+          {resolvedView === 'landing' && (
+            <LandingAuthView
+              authUser={authUser}
+              needsProfileCompletion={Boolean(authUser && clientResolved && !currentClient)}
+              onAuthenticated={(client) => {
+                setCurrentClient(client);
+                navigateUrl({}, { type: 'dashboard' });
+              }}
+              onOpenAdmin={handleNavigateAdmin}
+            />
+          )}
+        </>
       )}
     </div>
   );
@@ -226,15 +252,23 @@ class AppErrorBoundary extends Component<
 
   render() {
     if (this.state.error) {
+      let displayMsg =
+        this.state.error.message || 'An unexpected error occurred while rendering this page.';
+      try {
+        const parsed = JSON.parse(this.state.error.message);
+        if (parsed && typeof parsed.error === 'string') {
+          displayMsg = parsed.error;
+        }
+      } catch {
+        // Not a JSON FirestoreErrorInfo payload
+      }
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
           <div className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-6 space-y-4">
             <h1 className="font-display text-lg font-bold text-slate-900">
               Something went wrong
             </h1>
-            <p className="text-sm text-slate-600">
-              {this.state.error.message || 'An unexpected error occurred while rendering this page.'}
-            </p>
+            <p className="text-sm text-slate-600 break-words">{displayMsg}</p>
             <button
               type="button"
               onClick={() => {
@@ -260,4 +294,3 @@ export function RootApp() {
     </AppErrorBoundary>
   );
 }
-

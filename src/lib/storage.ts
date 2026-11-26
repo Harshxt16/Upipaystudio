@@ -1,34 +1,23 @@
+import {
+  Timestamp,
+  collection,
+  deleteField,
+  doc,
+  getDoc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import { ClientAccount, CustomerOrder, GatewayConfig, OrderStatus } from '../types';
+import { OperationType, db, handleFirestoreError } from './firebase';
 
 const CLIENTS_KEY = 'upipay_studio_clients_v1';
 const ORDERS_KEY = 'upipay_studio_orders_v1';
-const SESSION_CLIENT_KEY = 'upipay_studio_current_client_id';
 const ADMIN_AUTH_KEY = 'upipay_studio_admin_authed';
-
-const SYNC_EVENT = 'upipay_studio_data_updated';
-
-function emitSync(): void {
-  window.dispatchEvent(new CustomEvent(SYNC_EVENT));
-}
-
-export function subscribeToStorageSync(callback: () => void): () => void {
-  const onCustom = () => callback();
-  const onStorage = (e: StorageEvent) => {
-    if (
-      e.key === CLIENTS_KEY ||
-      e.key === ORDERS_KEY ||
-      e.key === SESSION_CLIENT_KEY
-    ) {
-      callback();
-    }
-  };
-  window.addEventListener(SYNC_EVENT, onCustom);
-  window.addEventListener('storage', onStorage);
-  return () => {
-    window.removeEventListener(SYNC_EVENT, onCustom);
-    window.removeEventListener('storage', onStorage);
-  };
-}
 
 const memoryStorage = new Map<string, string>();
 
@@ -45,16 +34,7 @@ function safeSetLocal(key: string, value: string): void {
   try {
     window.localStorage.setItem(key, value);
   } catch {
-    // Ignore storage quota/security errors in restricted iframes
-  }
-}
-
-function safeRemoveLocal(key: string): void {
-  memoryStorage.delete(key);
-  try {
-    window.localStorage.removeItem(key);
-  } catch {
-    // Ignore storage errors
+    // Ignore storage errors in restricted iframes
   }
 }
 
@@ -84,55 +64,57 @@ function safeRemoveSession(key: string): void {
   }
 }
 
-export function getClients(): ClientAccount[] {
-  try {
-    const raw = safeGetLocal(CLIENTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+function timestampToIso(value: unknown): string {
+  if (value instanceof Timestamp) {
+    return value.toDate().toISOString();
   }
-}
-
-export function saveClients(clients: ClientAccount[]): void {
-  safeSetLocal(CLIENTS_KEY, JSON.stringify(clients));
-  emitSync();
-}
-
-export function getOrders(): CustomerOrder[] {
-  try {
-    const raw = safeGetLocal(ORDERS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+  if (
+    value &&
+    typeof value === 'object' &&
+    'toDate' in value &&
+    typeof (value as { toDate: () => Date }).toDate === 'function'
+  ) {
+    return (value as { toDate: () => Date }).toDate().toISOString();
   }
+  if (typeof value === 'string') return value;
+  return new Date().toISOString();
 }
 
-export function saveOrders(orders: CustomerOrder[]): void {
-  safeSetLocal(ORDERS_KEY, JSON.stringify(orders));
-  emitSync();
+function mapClientDoc(id: string, data: Record<string, unknown>): ClientAccount {
+  return {
+    id,
+    uid: typeof data.uid === 'string' ? data.uid : id,
+    merchantCode: typeof data.merchantCode === 'string' ? data.merchantCode : id.slice(0, 8).toUpperCase(),
+    slug: typeof data.slug === 'string' ? data.slug : 'merchant',
+    fullName: typeof data.fullName === 'string' ? data.fullName : '',
+    entityName: typeof data.entityName === 'string' ? data.entityName : '',
+    email: typeof data.email === 'string' ? data.email : '',
+    status: (data.status as ClientAccount['status']) || 'UNPAID',
+    gatewayConfig: (data.gatewayConfig as GatewayConfig | null) ?? null,
+    activationUtr: typeof data.activationUtr === 'string' ? data.activationUtr : undefined,
+    activationSubmittedAt:
+      typeof data.activationSubmittedAt === 'string' ? data.activationSubmittedAt : undefined,
+    activatedAt: typeof data.activatedAt === 'string' ? data.activatedAt : undefined,
+    rejectedReason: typeof data.rejectedReason === 'string' ? data.rejectedReason : undefined,
+    createdAt: timestampToIso(data.createdAt),
+    updatedAt: data.updatedAt ? timestampToIso(data.updatedAt) : undefined,
+  };
 }
 
-export function getCurrentClientId(): string | null {
-  return safeGetLocal(SESSION_CLIENT_KEY);
-}
-
-export function setCurrentClientId(clientId: string | null): void {
-  if (clientId) {
-    safeSetLocal(SESSION_CLIENT_KEY, clientId);
-  } else {
-    safeRemoveLocal(SESSION_CLIENT_KEY);
-  }
-  emitSync();
-}
-
-export function getCurrentClient(): ClientAccount | null {
-  const id = getCurrentClientId();
-  if (!id) return null;
-  return getClients().find((c) => c.id === id) ?? null;
+function mapOrderDoc(id: string, data: Record<string, unknown>): CustomerOrder {
+  return {
+    id,
+    clientId: typeof data.clientId === 'string' ? data.clientId : '',
+    clientSlug: typeof data.clientSlug === 'string' ? data.clientSlug : '',
+    orderId: typeof data.orderId === 'string' ? data.orderId : '',
+    amount: typeof data.amount === 'number' ? data.amount : 0,
+    utr: typeof data.utr === 'string' ? data.utr : '',
+    customerName: typeof data.customerName === 'string' ? data.customerName : undefined,
+    customerNote: typeof data.customerNote === 'string' ? data.customerNote : undefined,
+    status: (data.status as OrderStatus) || 'PENDING_VERIFICATION',
+    createdAt: timestampToIso(data.createdAt),
+    updatedAt: timestampToIso(data.updatedAt),
+  };
 }
 
 export function isAdminAuthenticated(): boolean {
@@ -147,153 +129,284 @@ export function setAdminAuthenticated(authed: boolean): void {
   }
 }
 
-export function generateUniqueSlug(entityName: string, existingClients: ClientAccount[]): string {
-  const base = entityName
+export function generateSafeSlug(entityName: string, uid: string): string {
+  const base =
+    entityName
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 72) || 'merchant';
+  const suffix = uid
     .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'merchant';
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 6);
+  return `${base}-${suffix || 'gw'}`.slice(0, 100);
+}
 
-  const existingSlugs = new Set(existingClients.map((c) => c.slug));
-  if (!existingSlugs.has(base)) return base;
+export function generateMerchantCode(): string {
+  const randomPart = Math.random().toString(36).substring(2, 7).toUpperCase().replace(/[^A-Z0-9]/g, 'X');
+  const timePart = Date.now().toString(36).slice(-4).toUpperCase().replace(/[^A-Z0-9]/g, '0');
+  return `UP${timePart}${randomPart}`.slice(0, 32);
+}
 
-  let counter = 2;
-  while (existingSlugs.has(`${base}-${counter}`)) {
-    counter += 1;
+// --- Firestore Client Operations ---
+
+export async function getClientAccountOnce(uid: string): Promise<ClientAccount | null> {
+  const docPath = `clients/${uid}`;
+  try {
+    const snap = await getDoc(doc(db, 'clients', uid));
+    if (!snap.exists()) return null;
+    return mapClientDoc(snap.id, snap.data() as Record<string, unknown>);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, docPath);
   }
-  return `${base}-${counter}`;
 }
 
-export function generateClientId(): string {
-  const randomPart = Math.random().toString(36).substring(2, 7).toUpperCase();
-  const timePart = Date.now().toString(36).slice(-4).toUpperCase();
-  return `UP${timePart}${randomPart}`;
+export function subscribeClientAccount(
+  uid: string,
+  onData: (client: ClientAccount | null) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const docPath = `clients/${uid}`;
+  return onSnapshot(
+    doc(db, 'clients', uid),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      onData(mapClientDoc(snap.id, snap.data() as Record<string, unknown>));
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, docPath);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
 }
 
-export function registerClient(input: {
+export function subscribeAllClientsForAdmin(
+  onData: (clients: ClientAccount[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const collectionPath = 'clients';
+  const q = query(collection(db, collectionPath), orderBy('createdAt', 'desc'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs.map((d) =>
+        mapClientDoc(d.id, d.data() as Record<string, unknown>)
+      );
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, collectionPath);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function createClientAccount(input: {
+  uid: string;
+  email: string;
   fullName: string;
   entityName: string;
-  email: string;
-  password: string;
-}): { ok: true; client: ClientAccount } | { ok: false; error: string } {
-  const clients = getClients();
-  const normalizedEmail = input.email.trim().toLowerCase();
+}): Promise<ClientAccount> {
+  const docPath = `clients/${input.uid}`;
+  const cleanFullName = input.fullName.trim().slice(0, 120);
+  const cleanEntityName = input.entityName.trim().slice(0, 120);
+  const cleanEmail = input.email.trim().toLowerCase().slice(0, 254);
+  const merchantCode = generateMerchantCode();
+  const slug = generateSafeSlug(cleanEntityName, input.uid);
 
-  if (clients.some((c) => c.email.toLowerCase() === normalizedEmail)) {
-    return { ok: false, error: 'An account with this email address already exists.' };
-  }
-
-  const newClient: ClientAccount = {
-    id: generateClientId(),
-    slug: generateUniqueSlug(input.entityName, clients),
-    fullName: input.fullName.trim(),
-    entityName: input.entityName.trim(),
-    email: normalizedEmail,
-    password: input.password,
-    status: 'UNPAID',
+  const payload = {
+    id: input.uid,
+    uid: input.uid,
+    merchantCode,
+    slug,
+    fullName: cleanFullName,
+    entityName: cleanEntityName,
+    email: cleanEmail,
+    status: 'UNPAID' as const,
     gatewayConfig: null,
-    createdAt: new Date().toISOString(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   };
 
-  saveClients([newClient, ...clients]);
-  setCurrentClientId(newClient.id);
-  return { ok: true, client: newClient };
-}
-
-export function loginClient(
-  email: string,
-  password: string
-): { ok: true; client: ClientAccount } | { ok: false; error: string } {
-  const normalizedEmail = email.trim().toLowerCase();
-  const clients = getClients();
-  const match = clients.find(
-    (c) => c.email.toLowerCase() === normalizedEmail && c.password === password
-  );
-  if (!match) {
-    return { ok: false, error: 'Invalid email address or password.' };
+  try {
+    await setDoc(doc(db, 'clients', input.uid), payload);
+    const created = await getClientAccountOnce(input.uid);
+    if (created) return created;
+    const nowIso = new Date().toISOString();
+    return {
+      id: payload.id,
+      uid: payload.uid,
+      merchantCode: payload.merchantCode,
+      slug: payload.slug,
+      fullName: payload.fullName,
+      entityName: payload.entityName,
+      email: payload.email,
+      status: payload.status,
+      gatewayConfig: payload.gatewayConfig,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, docPath);
   }
-  setCurrentClientId(match.id);
-  return { ok: true, client: match };
 }
 
-export function updateClientGatewayConfig(
+function sanitizeGatewayConfig(config: GatewayConfig): Record<string, string> {
+  const clean: Record<string, string> = {
+    upiId: config.upiId.trim().slice(0, 256),
+    payeeName: config.payeeName.trim().slice(0, 120),
+    accentColor: (config.accentColor || '#0F766E').trim().slice(0, 20),
+    configuredAt: new Date().toISOString().slice(0, 64),
+  };
+  if (config.adminPin?.trim()) {
+    clean.adminPin = config.adminPin.trim().slice(0, 64);
+  }
+  if (config.redirectUrl?.trim()) {
+    clean.redirectUrl = config.redirectUrl.trim().slice(0, 500);
+  }
+  if (config.staticQrDataUrl?.trim()) {
+    clean.staticQrDataUrl = config.staticQrDataUrl.trim().slice(0, 500000);
+  }
+  if (config.deliveryEmail?.trim()) {
+    clean.deliveryEmail = config.deliveryEmail.trim().slice(0, 254);
+  }
+  if (config.deliveryPreference?.trim()) {
+    clean.deliveryPreference = config.deliveryPreference.trim().slice(0, 64);
+  }
+  return clean;
+}
+
+export async function updateClientGatewayConfig(
   clientId: string,
   config: GatewayConfig
-): ClientAccount | null {
-  const clients = getClients();
-  let updated: ClientAccount | null = null;
-  const next = clients.map((c) => {
-    if (c.id !== clientId) return c;
-    updated = {
-      ...c,
-      gatewayConfig: {
-        ...config,
-        configuredAt: new Date().toISOString(),
-      },
-    };
-    return updated;
-  });
-  saveClients(next);
-  return updated;
+): Promise<void> {
+  const docPath = `clients/${clientId}`;
+  const cleanConfig = sanitizeGatewayConfig(config);
+  try {
+    await updateDoc(doc(db, 'clients', clientId), {
+      gatewayConfig: cleanConfig,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, docPath);
+  }
 }
 
-export function submitActivationUtr(
-  clientId: string,
-  utr: string
-): ClientAccount | null {
-  const clients = getClients();
-  let updated: ClientAccount | null = null;
-  const next = clients.map((c) => {
-    if (c.id !== clientId) return c;
-    updated = {
-      ...c,
-      activationUtr: utr.trim(),
+export async function submitActivationUtr(clientId: string, utr: string): Promise<void> {
+  const docPath = `clients/${clientId}`;
+  const cleanUtr = utr.trim().slice(0, 32);
+  try {
+    await updateDoc(doc(db, 'clients', clientId), {
+      activationUtr: cleanUtr,
       activationSubmittedAt: new Date().toISOString(),
       status: 'PENDING_VERIFICATION',
-      rejectedReason: undefined,
-    };
-    return updated;
-  });
-  saveClients(next);
-  return updated;
+      rejectedReason: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, docPath);
+  }
 }
 
-export function adminApproveClient(clientId: string): ClientAccount | null {
-  const clients = getClients();
-  let updated: ClientAccount | null = null;
-  const next = clients.map((c) => {
-    if (c.id !== clientId) return c;
-    updated = {
-      ...c,
+export async function adminApproveClient(clientId: string): Promise<void> {
+  const docPath = `clients/${clientId}`;
+  try {
+    await updateDoc(doc(db, 'clients', clientId), {
       status: 'ACTIVE',
       activatedAt: new Date().toISOString(),
-      rejectedReason: undefined,
-    };
-    return updated;
-  });
-  saveClients(next);
-  return updated;
+      rejectedReason: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, docPath);
+  }
 }
 
-export function adminRejectClient(clientId: string, reason?: string): ClientAccount | null {
-  const clients = getClients();
-  let updated: ClientAccount | null = null;
-  const next = clients.map((c) => {
-    if (c.id !== clientId) return c;
-    updated = {
-      ...c,
+export async function adminRejectClient(clientId: string, reason?: string): Promise<void> {
+  const docPath = `clients/${clientId}`;
+  const cleanReason = (
+    reason?.trim() || 'UTR could not be verified against FamPay history.'
+  ).slice(0, 500);
+  try {
+    await updateDoc(doc(db, 'clients', clientId), {
       status: 'REJECTED',
-      rejectedReason: reason?.trim() || 'UTR could not be verified against FamPay history.',
-    };
-    return updated;
-  });
-  saveClients(next);
-  return updated;
+      rejectedReason: cleanReason,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, docPath);
+  }
+}
+
+// --- Firestore Orders Operations ---
+
+export function subscribeOrdersForClient(
+  clientId: string,
+  onData: (orders: CustomerOrder[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const collectionPath = 'orders';
+  const q = query(
+    collection(db, collectionPath),
+    where('clientId', '==', clientId),
+    orderBy('createdAt', 'desc')
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs.map((d) =>
+        mapOrderDoc(d.id, d.data() as Record<string, unknown>)
+      );
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, collectionPath);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+// --- Local Cache Helpers for Legacy / Sandbox Utilities ---
+
+export function getClients(): ClientAccount[] {
+  try {
+    const raw = safeGetLocal(CLIENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export function getClientBySlug(slug: string): ClientAccount | null {
   const normalized = slug.trim().toLowerCase();
   return getClients().find((c) => c.slug.toLowerCase() === normalized) ?? null;
+}
+
+export function getOrders(): CustomerOrder[] {
+  try {
+    const raw = safeGetLocal(ORDERS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export function createCustomerOrder(input: {
@@ -320,7 +433,7 @@ export function createCustomerOrder(input: {
     createdAt: now,
     updatedAt: now,
   };
-  saveOrders([order, ...orders]);
+  safeSetLocal(ORDERS_KEY, JSON.stringify([order, ...orders]));
   return order;
 }
 
@@ -336,13 +449,11 @@ export function updateOrderStatus(orderRecordId: string, status: OrderStatus): C
     };
     return updated;
   });
-  saveOrders(next);
+  safeSetLocal(ORDERS_KEY, JSON.stringify(next));
   return updated;
 }
 
-export function getOrdersForClient(clientId: string): CustomerOrder[] {
-  return getOrders().filter((o) => o.clientId === clientId);
-}
+// --- Pure Validation & Formatting Utilities ---
 
 export function isValidUpiId(upi: string): boolean {
   return /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z]{2,64}$/.test(upi.trim());

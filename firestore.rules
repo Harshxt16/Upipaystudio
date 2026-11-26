@@ -1,0 +1,272 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Hardened Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isAdminToken() {
+      return isVerifiedUser() && request.auth.token.email == 'autoclipping1@gmail.com';
+    }
+
+    function isAdmin() {
+      return isAdminToken() || (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    // --- Validation Blueprints ---
+    function isValidGatewayConfig(cfg) {
+      return cfg is map
+        && cfg.keys().hasAll(['upiId', 'payeeName', 'accentColor'])
+        && cfg.keys().hasOnly([
+          'upiId',
+          'payeeName',
+          'adminPin',
+          'accentColor',
+          'redirectUrl',
+          'staticQrDataUrl',
+          'deliveryEmail',
+          'deliveryPreference',
+          'configuredAt'
+        ])
+        && cfg.upiId is string && cfg.upiId.size() >= 3 && cfg.upiId.size() <= 256
+        && cfg.payeeName is string && cfg.payeeName.size() >= 2 && cfg.payeeName.size() <= 120
+        && cfg.accentColor is string && cfg.accentColor.size() >= 4 && cfg.accentColor.size() <= 20
+        && (!('adminPin' in cfg) || (cfg.adminPin is string && cfg.adminPin.size() >= 4 && cfg.adminPin.size() <= 64))
+        && (!('redirectUrl' in cfg) || (cfg.redirectUrl is string && cfg.redirectUrl.size() <= 500))
+        && (!('staticQrDataUrl' in cfg) || (cfg.staticQrDataUrl is string && cfg.staticQrDataUrl.size() <= 500000))
+        && (!('deliveryEmail' in cfg) || (cfg.deliveryEmail is string && cfg.deliveryEmail.size() <= 254))
+        && (!('deliveryPreference' in cfg) || (cfg.deliveryPreference is string && cfg.deliveryPreference.size() <= 64))
+        && (!('configuredAt' in cfg) || (cfg.configuredAt is string && cfg.configuredAt.size() <= 64));
+    }
+
+    function isValidClientAccount(data, clientId) {
+      return data.keys().hasAll([
+          'id',
+          'uid',
+          'merchantCode',
+          'slug',
+          'fullName',
+          'entityName',
+          'email',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'uid',
+          'merchantCode',
+          'slug',
+          'fullName',
+          'entityName',
+          'email',
+          'status',
+          'gatewayConfig',
+          'activationUtr',
+          'activationSubmittedAt',
+          'activatedAt',
+          'rejectedReason',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.id is string && data.id == clientId && isValidId(data.id)
+        && data.uid is string && data.uid == clientId && isValidId(data.uid)
+        && data.merchantCode is string && data.merchantCode.size() >= 3 && data.merchantCode.size() <= 32 && data.merchantCode.matches('^[A-Z0-9]+$')
+        && data.slug is string && data.slug.size() >= 1 && data.slug.size() <= 100 && data.slug.matches('^[a-z0-9\\-]+$')
+        && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120
+        && data.entityName is string && data.entityName.size() >= 2 && data.entityName.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.status in ['UNPAID', 'PENDING_VERIFICATION', 'ACTIVE', 'REJECTED']
+        && (!('gatewayConfig' in data) || data.gatewayConfig == null || isValidGatewayConfig(data.gatewayConfig))
+        && (!('activationUtr' in data) || (data.activationUtr is string && data.activationUtr.size() >= 4 && data.activationUtr.size() <= 32))
+        && (!('activationSubmittedAt' in data) || (data.activationSubmittedAt is string && data.activationSubmittedAt.size() <= 64))
+        && (!('activatedAt' in data) || (data.activatedAt is string && data.activatedAt.size() <= 64))
+        && (!('rejectedReason' in data) || (data.rejectedReason is string && data.rejectedReason.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCustomerOrder(data, orderDocId) {
+      return data.keys().hasAll([
+          'id',
+          'clientId',
+          'clientSlug',
+          'orderId',
+          'amount',
+          'utr',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'clientId',
+          'clientSlug',
+          'orderId',
+          'amount',
+          'utr',
+          'customerName',
+          'customerNote',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.id is string && data.id == orderDocId && isValidId(data.id)
+        && data.clientId is string && isValidId(data.clientId)
+        && data.clientSlug is string && data.clientSlug.size() >= 1 && data.clientSlug.size() <= 100 && data.clientSlug.matches('^[a-z0-9\\-]+$')
+        && data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 64
+        && data.amount is number && data.amount > 0 && data.amount <= 10000000
+        && data.utr is string && data.utr.size() >= 4 && data.utr.size() <= 32
+        && (!('customerName' in data) || (data.customerName is string && data.customerName.size() <= 120))
+        && (!('customerNote' in data) || (data.customerNote is string && data.customerNote.size() <= 240))
+        && data.status in ['PENDING_VERIFICATION', 'APPROVED', 'REJECTED']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    // Connectivity probe document (single read-only non-PII doc)
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    // Platform Owner Admins
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if isAdminToken();
+      allow create, update, delete: if false;
+    }
+
+    // Merchant Client Accounts (PII-isolated to owner or verified platform admin)
+    match /clients/{clientId} {
+      allow get: if isValidId(clientId) && (isOwner(clientId) || isAdmin());
+      allow list: if isAdminToken() || (isVerifiedUser() && existing().uid == request.auth.uid);
+
+      allow create: if isVerifiedUser()
+        && isValidId(clientId)
+        && isValidClientAccount(incoming(), clientId)
+        && isOwner(clientId)
+        && incoming().uid == request.auth.uid
+        && incoming().email == request.auth.token.email
+        && incoming().status == 'UNPAID'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(clientId)
+        && isValidClientAccount(incoming(), clientId)
+        && incoming().id == existing().id
+        && incoming().uid == existing().uid
+        && incoming().merchantCode == existing().merchantCode
+        && incoming().slug == existing().slug
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Admin Verification (Approve or Reject ₹499 Activation)
+          (
+            isAdmin()
+            && incoming().status in ['ACTIVE', 'REJECTED', 'PENDING_VERIFICATION']
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status',
+              'activatedAt',
+              'rejectedReason',
+              'updatedAt'
+            ])
+          )
+          ||
+          // Action 2: Owner updates Gateway Setup (UPI ID, Payee Name, Brand Color, etc.)
+          (
+            isOwner(clientId)
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'gatewayConfig',
+              'updatedAt'
+            ])
+          )
+          ||
+          // Action 3: Owner submits ₹499 Activation UTR (blocked once terminal ACTIVE)
+          (
+            isOwner(clientId)
+            && existing().status != 'ACTIVE'
+            && incoming().status == 'PENDING_VERIFICATION'
+            && ('activationUtr' in incoming())
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'activationUtr',
+              'activationSubmittedAt',
+              'status',
+              'rejectedReason',
+              'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // Customer Orders (Scoped to parent merchant owner or admin)
+    match /orders/{orderDocId} {
+      allow get: if isValidId(orderDocId) && (
+        (isVerifiedUser() && existing().clientId == request.auth.uid) || isAdmin()
+      );
+      allow list: if isAdminToken() || (isVerifiedUser() && existing().clientId == request.auth.uid);
+
+      allow create: if isVerifiedUser()
+        && isValidId(orderDocId)
+        && isValidCustomerOrder(incoming(), orderDocId)
+        && incoming().status == 'PENDING_VERIFICATION'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/clients/$(incoming().clientId));
+
+      allow update: if isVerifiedUser()
+        && isValidId(orderDocId)
+        && isValidCustomerOrder(incoming(), orderDocId)
+        && incoming().id == existing().id
+        && incoming().clientId == existing().clientId
+        && incoming().clientSlug == existing().clientSlug
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            existing().clientId == request.auth.uid
+            && existing().status == 'PENDING_VERIFICATION'
+            && incoming().status in ['APPROVED', 'REJECTED']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+        );
+
+      allow delete: if false;
+    }
+  }
+}

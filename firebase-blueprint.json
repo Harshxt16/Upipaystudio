@@ -1,0 +1,250 @@
+{
+  "entities": {
+    "ClientAccount": {
+      "title": "ClientAccount",
+      "description": "Merchant account, onboarding status, ₹499 activation UTR, and personalized UPI gateway configuration.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Firebase Auth UID of the merchant owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the merchant owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "merchantCode": {
+          "type": "string",
+          "description": "Short human-readable merchant identifier.",
+          "minLength": 3,
+          "maxLength": 32,
+          "pattern": "^[A-Z0-9]+$"
+        },
+        "slug": {
+          "type": "string",
+          "description": "URL-safe unique business slug.",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[a-z0-9\\-]+$"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Merchant owner full name.",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "entityName": {
+          "type": "string",
+          "description": "Business or entity name.",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Merchant verified contact email.",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "status": {
+          "type": "string",
+          "enum": ["UNPAID", "PENDING_VERIFICATION", "ACTIVE", "REJECTED"],
+          "description": "Lifetime license verification status."
+        },
+        "gatewayConfig": {
+          "type": "object",
+          "description": "Merchant UPI and branding configuration map.",
+          "properties": {
+            "upiId": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "payeeName": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "adminPin": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "accentColor": {
+              "type": "string",
+              "maxLength": 20
+            },
+            "redirectUrl": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "staticQrDataUrl": {
+              "type": "string",
+              "maxLength": 500000
+            },
+            "deliveryEmail": {
+              "type": "string",
+              "maxLength": 254
+            },
+            "deliveryPreference": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "configuredAt": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        },
+        "activationUtr": {
+          "type": "string",
+          "description": "12-digit UPI UTR or app confirmation reference for the ₹499 lifetime payment.",
+          "maxLength": 32
+        },
+        "activationSubmittedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "activatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "rejectedReason": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "merchantCode",
+        "slug",
+        "fullName",
+        "entityName",
+        "email",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CustomerOrder": {
+      "title": "CustomerOrder",
+      "description": "Customer UPI payment submission associated with a merchant gateway.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "clientId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "clientSlug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[a-z0-9\\-]+$"
+        },
+        "orderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "amount": {
+          "type": "number"
+        },
+        "utr": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "customerName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "customerNote": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING_VERIFICATION", "APPROVED", "REJECTED"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "clientId",
+        "clientSlug",
+        "orderId",
+        "amount",
+        "utr",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Platform owner administrator record.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/clients/{clientId}": {
+      "schema": { "$ref": "#/entities/ClientAccount" },
+      "description": "Stores merchant profiles, UPI gateway configs, and ₹499 activation UTR verification status. Scoped to owner UID or platform owner admin."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/CustomerOrder" },
+      "description": "Stores customer UPI order submissions scoped to clientId."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Platform owner admin allowlist."
+    }
+  }
+}

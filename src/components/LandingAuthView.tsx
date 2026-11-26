@@ -1,57 +1,119 @@
 import { FormEvent, useState } from 'react';
-import { ArrowRight, Check, Lock, QrCode, ShieldCheck, Smartphone, ClipboardList } from 'lucide-react';
-import { loginClient, registerClient } from '../lib/storage';
-import { ClientAccount } from '../types';
+import { User, signInWithPopup, signOut } from 'firebase/auth';
+import {
+  ArrowRight,
+  Check,
+  ClipboardList,
+  Lock,
+  QrCode,
+  ShieldCheck,
+  Smartphone,
+} from 'lucide-react';
 import { PLATFORM_OWNER_CONFIG } from '../config/platform';
+import { auth, googleProvider } from '../lib/firebase';
+import { createClientAccount, getClientAccountOnce } from '../lib/storage';
+import { ClientAccount } from '../types';
 
 interface LandingAuthViewProps {
+  authUser: User | null;
+  needsProfileCompletion: boolean;
   onAuthenticated: (client: ClientAccount) => void;
   onOpenAdmin: () => void;
 }
 
-export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthViewProps) {
+export function LandingAuthView({
+  authUser,
+  needsProfileCompletion,
+  onAuthenticated,
+  onOpenAdmin,
+}: LandingAuthViewProps) {
   const [mode, setMode] = useState<'signup' | 'login'>('signup');
-  const [fullName, setFullName] = useState('');
+  const [fullName, setFullName] = useState(authUser?.displayName || '');
   const [entityName, setEntityName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleGoogleAuth = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (mode === 'signup') {
       if (fullName.trim().length < 2) {
-        setError('Please enter your full name.');
+        setError('Please enter your full name (minimum 2 characters).');
         return;
       }
       if (entityName.trim().length < 2) {
-        setError('Please enter your business or entity name.');
+        setError('Please enter your business or entity name (minimum 2 characters).');
         return;
       }
-      if (!email.includes('@')) {
-        setError('Please enter a valid email address.');
-        return;
-      }
-      if (password.length < 6) {
-        setError('Password must be at least 6 characters.');
-        return;
-      }
-      const res = registerClient({ fullName, entityName, email, password });
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      onAuthenticated(res.client);
-    } else {
-      const res = loginClient(email, password);
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      onAuthenticated(res.client);
     }
+
+    setSubmitting(true);
+    try {
+      const cred = await signInWithPopup(auth, googleProvider);
+      const user = cred.user;
+      const existing = await getClientAccountOnce(user.uid);
+      if (existing) {
+        onAuthenticated(existing);
+        return;
+      }
+
+      if (mode === 'signup') {
+        const created = await createClientAccount({
+          uid: user.uid,
+          email: user.email || '',
+          fullName: fullName.trim() || user.displayName || 'Merchant Owner',
+          entityName: entityName.trim(),
+        });
+        onAuthenticated(created);
+        return;
+      }
+
+      // Signed in via Login tab, but no business profile created yet
+      setFullName(user.displayName || '');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Google sign-in failed.';
+      if (!message.includes('popup-closed-by-user')) {
+        setError(message);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCompleteProfile = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!authUser) return;
+
+    if (fullName.trim().length < 2) {
+      setError('Please enter your full name (minimum 2 characters).');
+      return;
+    }
+    if (entityName.trim().length < 2) {
+      setError('Please enter your business or entity name (minimum 2 characters).');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const created = await createClientAccount({
+        uid: authUser.uid,
+        email: authUser.email || '',
+        fullName: fullName.trim(),
+        entityName: entityName.trim(),
+      });
+      onAuthenticated(created);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create merchant profile.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSwitchAccount = async () => {
+    setError('');
+    await signOut(auth);
   };
 
   return (
@@ -67,7 +129,7 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
                 Host your own Direct UPI Payment Gateway in minutes.
               </h1>
               <p className="text-base sm:text-lg text-slate-600 leading-relaxed max-w-xl">
-                Accept instant UPI payments from customers via dynamic QR codes and mobile intent deep-links straight into your FamPay, GPay, PhonePe, or bank UPI ID. Pay once, own your checkout link forever.
+                Accept instant UPI payments from customers via dynamic QR codes and mobile intent deep-links straight into your FamPay, GPay, PhonePe, or bank UPI ID. Pay once, own your personalized gateway forever.
               </p>
             </div>
 
@@ -109,64 +171,30 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
             id="auth-panel"
             className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 sm:p-8"
           >
-            <div className="flex items-center justify-between gap-4 pb-6 border-b border-slate-200">
-              <div>
-                <h2 className="font-display text-lg font-bold text-slate-900">
-                  {mode === 'signup' ? 'Create Merchant Account' : 'Merchant Sign In'}
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {mode === 'signup'
-                    ? 'Register your business to configure your UPI gateway'
-                    : 'Access your gateway settings and incoming orders'}
-                </p>
-              </div>
+            {needsProfileCompletion && authUser ? (
+              <div className="space-y-6">
+                <div className="pb-5 border-b border-slate-200">
+                  <h2 className="font-display text-lg font-bold text-slate-900">
+                    Complete Your Business Profile
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Signed in as <span className="font-medium text-slate-800">{authUser.email}</span>. Enter your business details to continue to setup.
+                  </p>
+                </div>
 
-              <div className="flex items-center p-1 bg-slate-100 rounded-lg shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode('signup');
-                    setError('');
-                  }}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                    mode === 'signup'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Sign Up
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode('login');
-                    setError('');
-                  }}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                    mode === 'login'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Log In
-                </button>
-              </div>
-            </div>
-
-            <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-              {mode === 'signup' && (
-                <>
+                <form onSubmit={handleCompleteProfile} className="space-y-4">
                   <div>
                     <label
-                      htmlFor="full-name"
+                      htmlFor="complete-full-name"
                       className="block text-xs font-semibold text-slate-700 mb-1.5"
                     >
                       Full Name
                     </label>
                     <input
-                      id="full-name"
+                      id="complete-full-name"
                       type="text"
                       required
+                      maxLength={120}
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
                       placeholder="Aarav Mehta"
@@ -176,73 +204,165 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
 
                   <div>
                     <label
-                      htmlFor="entity-name"
+                      htmlFor="complete-entity-name"
                       className="block text-xs font-semibold text-slate-700 mb-1.5"
                     >
                       Entity / Business Name
                     </label>
                     <input
-                      id="entity-name"
+                      id="complete-entity-name"
                       type="text"
                       required
+                      maxLength={120}
                       value={entityName}
                       onChange={(e) => setEntityName(e.target.value)}
                       placeholder="PixelCraft Digital Studio"
                       className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700"
                     />
                   </div>
-                </>
-              )}
 
-              <div>
-                <label
-                  htmlFor="email-address"
-                  className="block text-xs font-semibold text-slate-700 mb-1.5"
-                >
-                  Email Address
-                </label>
-                <input
-                  id="email-address"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="founder@pixelcraft.in"
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700"
-                />
+                  {error && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700">
+                      {error}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-60 rounded-lg transition-colors cursor-pointer"
+                  >
+                    {submitting ? 'Saving Profile...' : 'Continue to Gateway Setup'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSwitchAccount}
+                    className="w-full py-2 text-xs font-medium text-slate-500 hover:text-slate-900 cursor-pointer"
+                  >
+                    Use a different Google account
+                  </button>
+                </form>
               </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-4 pb-6 border-b border-slate-200">
+                  <div>
+                    <h2 className="font-display text-lg font-bold text-slate-900">
+                      {mode === 'signup' ? 'Create Merchant Account' : 'Merchant Sign In'}
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {mode === 'signup'
+                        ? 'Register your business to configure your UPI gateway'
+                        : 'Sign in with Google to check your gateway status'}
+                    </p>
+                  </div>
 
-              <div>
-                <label
-                  htmlFor="password"
-                  className="block text-xs font-semibold text-slate-700 mb-1.5"
-                >
-                  Password
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={mode === 'signup' ? 'Minimum 6 characters' : 'Enter your password'}
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700"
-                />
-              </div>
-
-              {error && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700">
-                  {error}
+                  <div className="flex items-center p-1 bg-slate-100 rounded-lg shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('signup');
+                        setError('');
+                      }}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                        mode === 'signup'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Sign Up
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('login');
+                        setError('');
+                      }}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                        mode === 'login'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Log In
+                    </button>
+                  </div>
                 </div>
-              )}
 
-              <button
-                type="submit"
-                className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-              >
-                {mode === 'signup' ? 'Continue to Gateway Setup' : 'Sign In to Workspace'}
-              </button>
-            </form>
+                <form onSubmit={handleGoogleAuth} className="mt-6 space-y-4">
+                  {mode === 'signup' && (
+                    <>
+                      <div>
+                        <label
+                          htmlFor="full-name"
+                          className="block text-xs font-semibold text-slate-700 mb-1.5"
+                        >
+                          Full Name
+                        </label>
+                        <input
+                          id="full-name"
+                          type="text"
+                          required
+                          maxLength={120}
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          placeholder="Aarav Mehta"
+                          className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="entity-name"
+                          className="block text-xs font-semibold text-slate-700 mb-1.5"
+                        >
+                          Entity / Business Name
+                        </label>
+                        <input
+                          id="entity-name"
+                          type="text"
+                          required
+                          maxLength={120}
+                          value={entityName}
+                          onChange={(e) => setEntityName(e.target.value)}
+                          placeholder="PixelCraft Digital Studio"
+                          className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {error && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700">
+                      {error}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-60 rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2.5"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        fill="#FFFFFF"
+                        d="M21.35 11.1h-9.17v2.98h5.27c-.23 1.49-1.69 4.38-5.27 4.38-3.17 0-5.76-2.62-5.76-5.86s2.59-5.86 5.76-5.86c1.81 0 3.02.77 3.71 1.44l2.53-2.44C16.8 4.24 14.69 3.3 12.18 3.3 7.21 3.3 3.2 7.31 3.2 12.28s4.01 8.98 8.98 8.98c5.18 0 8.62-3.64 8.62-8.77 0-.59-.07-1.04-.15-1.39z"
+                      />
+                    </svg>
+                    {submitting
+                      ? 'Connecting with Google...'
+                      : mode === 'signup'
+                      ? 'Continue with Google'
+                      : 'Sign in with Google'}
+                  </button>
+
+                  <p className="text-[11px] text-slate-500 text-center leading-relaxed">
+                    Secured by Google Sign-In &amp; Cloud Firestore so your gateway registration and ₹499 activation sync across all devices.
+                  </p>
+                </form>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -251,10 +371,10 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-2xl mb-12">
             <h2 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight [text-wrap:balance]">
-              Three steps from sign-up to live UPI checkout
+              Three steps from sign-up to your personalized gateway
             </h2>
             <p className="text-sm sm:text-base text-slate-600 mt-2">
-              Every payment routes straight to your own UPI handle with verifiable 12-digit UTR logs.
+              Every payment routes straight to your own UPI handle with verifiable 12-digit UTR tracking.
             </p>
           </div>
 
@@ -262,7 +382,7 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
             <div className="p-6 border border-slate-200 rounded-xl bg-slate-50/50">
               <p className="font-mono text-xs font-semibold text-teal-700 mb-3">01. Configure</p>
               <h3 className="font-display text-lg font-bold text-slate-900">
-                Set your UPI ID & branding
+                Set your UPI ID &amp; branding
               </h3>
               <p className="text-sm text-slate-600 mt-2 leading-relaxed">
                 Enter your merchant UPI ID, display name, brand accent color, optional static QR image, and post-payment redirect URL.
@@ -280,12 +400,12 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
             </div>
 
             <div className="p-6 border border-slate-200 rounded-xl bg-slate-50/50">
-              <p className="font-mono text-xs font-semibold text-teal-700 mb-3">03. Receive &amp; Launch</p>
+              <p className="font-mono text-xs font-semibold text-teal-700 mb-3">03. Personalized Setup</p>
               <h3 className="font-display text-lg font-bold text-slate-900">
-                Get editable code or a readymade app
+                Our team delivers your gateway
               </h3>
               <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                Provide your email to receive a personalized, editable UPI gateway code setup for your own app—or request a readymade setup with zero embeds required.
+                Once activated, our onboarding team verifies your details and contacts you directly with your personalized UPI payment gateway.
               </p>
             </div>
           </div>
@@ -308,7 +428,7 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
               <div className="p-5 bg-white border border-slate-200 rounded-xl">
                 <QrCode className="w-5 h-5 text-teal-700 mb-3" />
                 <h3 className="font-display text-base font-bold text-slate-900">
-                  Dynamic & Static QR Support
+                  Dynamic &amp; Static QR Support
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5">
                   Automatically embeds exact order amounts and order IDs into scannable UPI QR codes, or uses your uploaded static QR.
@@ -328,20 +448,20 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
               <div className="p-5 bg-white border border-slate-200 rounded-xl">
                 <ClipboardList className="w-5 h-5 text-teal-700 mb-3" />
                 <h3 className="font-display text-base font-bold text-slate-900">
-                  Incoming Orders Ledger
+                  UTR Order Verification
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5">
-                  Customers submit their 12-digit UTR right after paying so you can verify and approve orders with CSV export.
+                  Customers submit their 12-digit UTR right after paying so you can verify and approve orders directly.
                 </p>
               </div>
 
               <div className="p-5 bg-white border border-slate-200 rounded-xl">
                 <ShieldCheck className="w-5 h-5 text-teal-700 mb-3" />
                 <h3 className="font-display text-base font-bold text-slate-900">
-                  Editable Code or Readymade Setup
+                  Dedicated Team Onboarding
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5">
-                  Receive your standalone HTML/React gateway source code by email to customize inside your own app, or request a personalized readymade setup.
+                  Our specialists configure and deliver your personalized payment gateway tailored to your business name, brand colors, and UPI handle.
                 </p>
               </div>
             </div>
@@ -360,16 +480,16 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
                 ₹499 once, zero recurring fees
               </h2>
               <p className="text-sm text-slate-600 leading-relaxed">
-                For creators, indie makers, and growing businesses who want direct UPI settlement with full ownership of their checkout code.
+                For creators, indie makers, and growing businesses who want direct UPI settlement with a personalized payment gateway built for them.
               </p>
               <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-xs text-slate-700">
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-teal-700 shrink-0" />
-                  Editable HTML &amp; React code setup
+                  Personalized payment gateway
                 </li>
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-teal-700 shrink-0" />
-                  Readymade setup delivered by email
+                  Direct team outreach &amp; setup
                 </li>
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-teal-700 shrink-0" />
@@ -377,7 +497,7 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
                 </li>
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-teal-700 shrink-0" />
-                  Incoming order UTR dashboard
+                  100% direct-to-UPI settlement
                 </li>
               </ul>
             </div>

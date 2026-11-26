@@ -20,11 +20,13 @@ export interface GatewayConfig {
 
 export interface ClientAccount {
   id: string;
+  uid?: string;
+  merchantCode?: string;
   slug: string;
   fullName: string;
   entityName: string;
   email: string;
-  password: string;
+  password?: string;
   status: ClientAccountStatus;
   gatewayConfig: GatewayConfig | null;
   activationUtr?: string;
@@ -32,6 +34,7 @@ export interface ClientAccount {
   activatedAt?: string;
   rejectedReason?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface CustomerOrder {

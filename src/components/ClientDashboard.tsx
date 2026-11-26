@@ -2,50 +2,34 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
-  BookOpen,
   Check,
-  CheckCircle2,
-  ClipboardList,
-  Code2,
   Copy,
   CreditCard,
-  Download,
-  ExternalLink,
   Eye,
   EyeOff,
   ImagePlus,
-  KeyRound,
-  LayoutDashboard,
   Lock,
   QrCode,
-  Search,
   Settings2,
+  ShieldCheck,
   Smartphone,
   Trash2,
-  XCircle,
 } from 'lucide-react';
 import { BRAND_ACCENT_PRESETS, PLATFORM_OWNER_CONFIG } from '../config/platform';
-import { generateWebsiteCheckoutScript } from '../lib/checkoutScriptGenerator';
 import {
-  buildGatewayUrl,
   buildUpiIntentUri,
-  exportOrdersCsv,
-  formatDateTime,
-  formatInr,
   isValidOptionalUrl,
   isValidUpiId,
   isValidUtr,
   submitActivationUtr,
   updateClientGatewayConfig,
-  updateOrderStatus,
 } from '../lib/storage';
-import { ClientAccount, CustomerOrder, OrderStatus } from '../types';
-import { CheckoutSandbox } from './CheckoutSandbox';
+import { ClientAccount, CustomerOrder } from '../types';
+import { ConciergeGatewayCard } from './ConciergeGatewayCard';
 import { QrCodeDisplay } from './QrCodeDisplay';
-import { ClientStatusLabel, OrderStatusLabel } from './StatusIndicator';
+import { ClientStatusLabel } from './StatusIndicator';
 
-type DashboardTab = 'setup' | 'activation' | 'gateway' | 'orders';
-type IntegrationTab = 'code' | 'guide';
+type DashboardTab = 'setup' | 'activation' | 'gateway';
 type ActivationPayStep =
   | 'choose'
   | 'qr'
@@ -62,18 +46,17 @@ interface ClientDashboardProps {
 
 export function ClientDashboard({
   client,
-  orders,
-  onOpenLiveGateway,
   onRefresh,
 }: ClientDashboardProps) {
   const initialTab: DashboardTab = useMemo(() => {
+    if (client.status === 'ACTIVE' || client.status === 'PENDING_VERIFICATION') {
+      return 'gateway';
+    }
     if (!client.gatewayConfig) return 'setup';
-    if (client.status !== 'ACTIVE') return 'activation';
-    return 'gateway';
+    return 'activation';
   }, [client.gatewayConfig, client.status]);
 
   const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab);
-  const [integrationTab, setIntegrationTab] = useState<IntegrationTab>('code');
 
   // Setup Wizard Form State
   const [upiId, setUpiId] = useState(client.gatewayConfig?.upiId || '');
@@ -82,7 +65,6 @@ export function ClientDashboard({
   );
   const [adminPin, setAdminPin] = useState(client.gatewayConfig?.adminPin || '');
   const [showSetupPin, setShowSetupPin] = useState(false);
-  const [showGuidePin, setShowGuidePin] = useState(false);
   const [staticQrDataUrl, setStaticQrDataUrl] = useState<string | undefined>(
     client.gatewayConfig?.staticQrDataUrl
   );
@@ -94,21 +76,17 @@ export function ClientDashboard({
   );
   const [setupError, setSetupError] = useState('');
   const [setupSavedMsg, setSetupSavedMsg] = useState('');
+  const [savingSetup, setSavingSetup] = useState(false);
 
   // Activation Payment & UTR State
-  const [activationPayStep, setActivationPayStep] = useState<ActivationPayStep>(
-    client.status === 'PENDING_VERIFICATION' ? 'qr' : 'choose'
-  );
+  const [activationPayStep, setActivationPayStep] = useState<ActivationPayStep>('choose');
   const [activationUtr, setActivationUtr] = useState(
     client.activationUtr && client.activationUtr !== 'UPI-APP-PAID' ? client.activationUtr : ''
   );
   const [activationAppUtr, setActivationAppUtr] = useState('');
   const [activationError, setActivationError] = useState('');
+  const [submittingActivation, setSubmittingActivation] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string>('');
-
-  // Orders Filter State
-  const [orderSearch, setOrderSearch] = useState('');
-  const [orderFilter, setOrderFilter] = useState<'ALL' | OrderStatus>('ALL');
 
   const copyText = (key: string, value: string) => {
     navigator.clipboard?.writeText(value);
@@ -119,13 +97,17 @@ export function ClientDashboard({
   const handleStaticQrUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 1.5 * 1024 * 1024) {
-      setSetupError('QR image must be under 1.5 MB.');
+    if (file.size > 350 * 1024) {
+      setSetupError('QR image must be under 350 KB for cloud storage.');
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
+        if (reader.result.length > 500000) {
+          setSetupError('Encoded QR image is too large. Please upload a smaller image.');
+          return;
+        }
         setStaticQrDataUrl(reader.result);
         setSetupError('');
       }
@@ -133,7 +115,7 @@ export function ClientDashboard({
     reader.readAsDataURL(file);
   };
 
-  const handleSaveGateway = (e: FormEvent) => {
+  const handleSaveGateway = async (e: FormEvent) => {
     e.preventDefault();
     setSetupError('');
     setSetupSavedMsg('');
@@ -155,29 +137,41 @@ export function ClientDashboard({
       return;
     }
 
-    updateClientGatewayConfig(client.id, {
-      upiId: upiId.trim(),
-      payeeName: payeeName.trim(),
-      adminPin: adminPin.trim(),
-      staticQrDataUrl,
-      accentColor,
-      redirectUrl: redirectUrl.trim() || undefined,
-    });
-    onRefresh();
+    setSavingSetup(true);
+    try {
+      await updateClientGatewayConfig(client.id, {
+        upiId: upiId.trim(),
+        payeeName: payeeName.trim(),
+        adminPin: adminPin.trim(),
+        staticQrDataUrl,
+        accentColor,
+        redirectUrl: redirectUrl.trim() || undefined,
+      });
+      onRefresh();
 
-    if (client.status !== 'ACTIVE') {
-      setSetupSavedMsg('Gateway details saved. Complete ₹499 activation to unlock your website script.');
-      setActiveTab('activation');
-    } else {
-      setSetupSavedMsg('Gateway configuration updated.');
+      if (client.status !== 'ACTIVE' && client.status !== 'PENDING_VERIFICATION') {
+        setSetupSavedMsg('Gateway details saved. Complete ₹499 activation and our team will contact you soon.');
+        setActiveTab('activation');
+      } else if (client.status === 'PENDING_VERIFICATION') {
+        setSetupSavedMsg('Gateway details saved. Our team will contact you soon once your payment is verified.');
+        setActiveTab('gateway');
+      } else {
+        setSetupSavedMsg('Gateway configuration updated for your personalized payment gateway.');
+      }
+    } catch (err) {
+      setSetupError(err instanceof Error ? err.message : 'Failed to save gateway configuration.');
+    } finally {
+      setSavingSetup(false);
     }
   };
+
+  const activationRefCode = `LIFETIME_${client.merchantCode || client.id.slice(0, 8)}`;
 
   const activationIntentUri = buildUpiIntentUri({
     pa: PLATFORM_OWNER_CONFIG.upiId,
     pn: PLATFORM_OWNER_CONFIG.payeeName,
     am: PLATFORM_OWNER_CONFIG.lifetimeFeeInr,
-    tn: `LIFETIME_${client.id}`,
+    tn: activationRefCode,
   });
 
   useEffect(() => {
@@ -205,7 +199,7 @@ export function ClientDashboard({
     }
   };
 
-  const handleActivationSubmit = (e: FormEvent) => {
+  const handleActivationSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setActivationError('');
     const cleaned = activationUtr.replace(/\s+/g, '');
@@ -213,63 +207,41 @@ export function ClientDashboard({
       setActivationError('Enter a valid 12-digit numeric UPI UTR / Reference Number.');
       return;
     }
-    submitActivationUtr(client.id, cleaned);
-    onRefresh();
+    setSubmittingActivation(true);
+    try {
+      await submitActivationUtr(client.id, cleaned);
+      onRefresh();
+    } catch (err) {
+      setActivationError(err instanceof Error ? err.message : 'Failed to submit UTR.');
+    } finally {
+      setSubmittingActivation(false);
+    }
   };
 
-  const handleActivationUpiAppConfirm = (e: FormEvent) => {
+  const handleActivationUpiAppConfirm = async (e: FormEvent) => {
     e.preventDefault();
     setActivationError('');
     const cleaned = activationAppUtr.replace(/\s+/g, '');
-    submitActivationUtr(client.id, isValidUtr(cleaned) ? cleaned : 'UPI-APP-PAID');
-    onRefresh();
+    setSubmittingActivation(true);
+    try {
+      await submitActivationUtr(client.id, isValidUtr(cleaned) ? cleaned : 'UPI-APP-PAID');
+      onRefresh();
+    } catch (err) {
+      setActivationError(err instanceof Error ? err.message : 'Failed to confirm payment.');
+    } finally {
+      setSubmittingActivation(false);
+    }
   };
-
-  const baseGatewayUrl = buildGatewayUrl({ slug: client.slug });
-  const effectiveAdminPin = client.gatewayConfig?.adminPin?.trim() || '123456';
-  const hasCustomAdminPin = Boolean(client.gatewayConfig?.adminPin?.trim());
-
-  const websiteCheckoutScript = useMemo(() => {
-    if (!client.gatewayConfig) return '';
-    return generateWebsiteCheckoutScript({
-      slug: client.slug,
-      upiId: client.gatewayConfig.upiId,
-      entityName: client.entityName,
-      brandColor: client.gatewayConfig.accentColor || '#0F766E',
-      adminPin: effectiveAdminPin,
-      redirectUrl: client.gatewayConfig.redirectUrl,
-      staticQrDataUrl: client.gatewayConfig.staticQrDataUrl,
-    });
-  }, [client.slug, client.entityName, client.gatewayConfig, effectiveAdminPin]);
-
-  const filteredOrders = useMemo(() => {
-    const q = orderSearch.trim().toLowerCase();
-    return orders.filter((order) => {
-      if (orderFilter !== 'ALL' && order.status !== orderFilter) return false;
-      if (!q) return true;
-      return (
-        order.orderId.toLowerCase().includes(q) ||
-        order.utr.toLowerCase().includes(q) ||
-        (order.customerName || '').toLowerCase().includes(q) ||
-        (order.customerNote || '').toLowerCase().includes(q)
-      );
-    });
-  }, [orders, orderSearch, orderFilter]);
-
-  const approvedOrders = orders.filter((o) => o.status === 'APPROVED');
-  const pendingOrders = orders.filter((o) => o.status === 'PENDING_VERIFICATION');
-  const approvedVolume = approvedOrders.reduce((sum, o) => sum + o.amount, 0);
 
   const navItems: { id: DashboardTab; label: string; icon: typeof Settings2; locked?: boolean }[] = [
     { id: 'setup', label: 'Gateway Setup', icon: Settings2 },
     { id: 'activation', label: 'Lifetime License (₹499)', icon: CreditCard },
     {
       id: 'gateway',
-      label: 'Website Integration',
-      icon: LayoutDashboard,
-      locked: client.status !== 'ACTIVE',
+      label: 'Personalized Gateway',
+      icon: ShieldCheck,
+      locked: client.status !== 'ACTIVE' && client.status !== 'PENDING_VERIFICATION',
     },
-    { id: 'orders', label: `Incoming Orders (${orders.length})`, icon: ClipboardList },
   ];
 
   return (
@@ -314,7 +286,9 @@ export function ClientDashboard({
           <div className="pt-4 border-t border-slate-200 space-y-2 text-xs">
             <div className="flex items-center justify-between text-slate-500">
               <span>Merchant ID</span>
-              <span className="font-mono text-slate-900 font-medium">{client.id}</span>
+              <span className="font-mono text-slate-900 font-medium">
+                {client.merchantCode || client.id.slice(0, 8)}
+              </span>
             </div>
             <div className="flex items-center justify-between text-slate-500">
               <span>Gateway Slug</span>
@@ -535,9 +509,14 @@ export function ClientDashboard({
                 <div className="flex items-center justify-end gap-3 pt-2">
                   <button
                     type="submit"
-                    className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                    disabled={savingSetup}
+                    className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-60 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                   >
-                    {client.gatewayConfig ? 'Save Configuration' : 'Save & Continue to Activation'}
+                    {savingSetup
+                      ? 'Saving...'
+                      : client.gatewayConfig
+                      ? 'Save Configuration'
+                      : 'Save & Continue to Activation'}
                   </button>
                 </div>
               </form>
@@ -545,61 +524,22 @@ export function ClientDashboard({
           )}
 
           {activeTab === 'activation' && (
-            <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8">
-              {client.status === 'ACTIVE' ? (
-                <div className="space-y-6">
-                  <div className="pb-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <h1 className="font-display text-xl font-bold text-slate-900">
-                        Lifetime Gateway License Active
-                      </h1>
-                      <p className="text-sm text-slate-500 mt-1">
-                        Your ₹499 lifetime payment has been verified by {PLATFORM_OWNER_CONFIG.payeeName}.
-                      </p>
-                    </div>
-                    <ClientStatusLabel status={client.status} />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                    <div>
-                      <p className="text-xs text-slate-500">Submitted UTR</p>
-                      <p className="font-mono text-sm font-semibold text-slate-900 mt-1 tabular-nums">
-                        {client.activationUtr || '—'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500">Activated On</p>
-                      <p className="text-sm font-medium text-slate-900 mt-1">
-                        {client.activatedAt ? formatDateTime(client.activatedAt) : '—'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500">Plan</p>
-                      <p className="text-sm font-medium text-slate-900 mt-1">
-                        ₹499 Lifetime (0% Fee)
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('gateway')}
-                      className="px-5 py-2.5 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-                    >
-                      Open Website Integration Studio
-                    </button>
-                  </div>
-                </div>
+            <>
+              {client.status === 'ACTIVE' || client.status === 'PENDING_VERIFICATION' ? (
+                <ConciergeGatewayCard
+                  client={client}
+                  onGoToSetup={() => setActiveTab('setup')}
+                  onRefresh={onRefresh}
+                />
               ) : (
-                <div className="space-y-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 space-y-6">
                   <div className="pb-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
                       <h1 className="font-display text-xl font-bold text-slate-900">
                         ₹499 Lifetime Gateway Activation
                       </h1>
                       <p className="text-sm text-slate-500 mt-1">
-                        Pay a one-time ₹499 fee to unlock your live shareable payment link and embed code.
+                        Complete the one-time ₹499 payment and our team will contact you soon with your personalized payment gateway.
                       </p>
                     </div>
                     <ClientStatusLabel status={client.status} />
@@ -608,7 +548,7 @@ export function ClientDashboard({
                   {!client.gatewayConfig && (
                     <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <p className="text-xs font-medium text-amber-800">
-                        Please configure your merchant UPI ID in Gateway Setup before or right after activating.
+                        Please configure your merchant UPI ID in Gateway Setup so our team can personalize your gateway.
                       </p>
                       <button
                         type="button"
@@ -629,60 +569,7 @@ export function ClientDashboard({
                     </div>
                   )}
 
-                  {client.status === 'PENDING_VERIFICATION' ? (
-                    <div className="space-y-6">
-                      <div className="p-5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-3">
-                        <h2 className="font-display text-base font-bold text-slate-900">
-                          Verification In Progress
-                        </h2>
-                        <p className="text-sm text-slate-700 leading-relaxed">
-                          Your reference <span className="font-mono font-semibold text-slate-900">{client.activationUtr}</span> was submitted on{' '}
-                          {client.activationSubmittedAt
-                            ? formatDateTime(client.activationSubmittedAt)
-                            : 'just now'}
-                          . Note: Verification may take up to <strong>24 hours</strong>—once {PLATFORM_OWNER_CONFIG.payeeName} verifies the ₹499 FamPay transaction in the Owner Admin Panel, your gateway activates immediately.
-                        </p>
-                      </div>
-
-                      <form onSubmit={handleActivationSubmit} className="max-w-md space-y-4">
-                        <div>
-                          <label
-                            htmlFor="activation-utr"
-                            className="block text-xs font-semibold text-slate-700 mb-1.5"
-                          >
-                            Update 12-Digit UPI UTR / Reference Number (Optional)
-                          </label>
-                          <input
-                            id="activation-utr"
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={12}
-                            required
-                            value={activationUtr}
-                            onChange={(e) =>
-                              setActivationUtr(e.target.value.replace(/\D/g, '').slice(0, 12))
-                            }
-                            placeholder="412345678901"
-                            className="w-full px-3.5 py-2.5 text-base font-mono tracking-wider bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700 tabular-nums"
-                          />
-                        </div>
-
-                        {activationError && (
-                          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700">
-                            {activationError}
-                          </div>
-                        )}
-
-                        <button
-                          type="submit"
-                          className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-                        >
-                          Update Submitted UTR
-                        </button>
-                      </form>
-                    </div>
-                  ) : (
-                    <div className="max-w-2xl space-y-6">
+                  <div className="max-w-2xl space-y-6">
                       <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg">
                         <div>
                           <p className="text-xs font-semibold text-slate-600">
@@ -765,7 +652,7 @@ export function ClientDashboard({
                               </div>
                               <div className="flex items-center justify-between gap-2">
                                 <span className="text-slate-500">Reference</span>
-                                <span className="font-mono text-slate-900">LIFETIME_{client.id}</span>
+                                <span className="font-mono text-slate-900">{activationRefCode}</span>
                               </div>
                             </div>
                           </div>
@@ -815,9 +702,10 @@ export function ClientDashboard({
 
                               <button
                                 type="submit"
-                                className="w-full px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                                disabled={submittingActivation}
+                                className="w-full px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-60 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                               >
-                                Submit UTR for Verification
+                                {submittingActivation ? 'Submitting...' : 'Submit UTR for Verification'}
                               </button>
                             </form>
                           </div>
@@ -893,9 +781,10 @@ export function ClientDashboard({
                             </div>
                             <button
                               type="submit"
-                              className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer"
+                              disabled={submittingActivation}
+                              className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-60 rounded-lg cursor-pointer"
                             >
-                              Yes, Payment Completed
+                              {submittingActivation ? 'Confirming...' : 'Yes, Payment Completed'}
                             </button>
                           </form>
 
@@ -936,22 +825,27 @@ export function ClientDashboard({
                         </div>
                       )}
                     </div>
-                  )}
                 </div>
               )}
-            </div>
+            </>
           )}
 
           {activeTab === 'gateway' && (
-            <div className="space-y-6">
-              {client.status !== 'ACTIVE' ? (
+            <>
+              {client.status === 'ACTIVE' || client.status === 'PENDING_VERIFICATION' ? (
+                <ConciergeGatewayCard
+                  client={client}
+                  onGoToSetup={() => setActiveTab('setup')}
+                  onRefresh={onRefresh}
+                />
+              ) : (
                 <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-4">
                   <Lock className="w-8 h-8 text-slate-400 mx-auto" />
                   <h2 className="font-display text-lg font-bold text-slate-900">
-                    Gateway Link Locked Until Activation
+                    Personalized Gateway Locked Until Payment
                   </h2>
                   <p className="text-sm text-slate-600 max-w-md mx-auto">
-                    Complete the one-time ₹499 lifetime payment and admin verification to unlock your shareable checkout link and embed snippets.
+                    Complete the one-time ₹499 lifetime payment and our team will contact you soon with your personalized payment gateway.
                   </p>
                   <button
                     type="button"
@@ -961,515 +855,8 @@ export function ClientDashboard({
                     Go to ₹499 Activation
                   </button>
                 </div>
-              ) : !client.gatewayConfig ? (
-                <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-4">
-                  <Settings2 className="w-8 h-8 text-slate-400 mx-auto" />
-                  <h2 className="font-display text-lg font-bold text-slate-900">
-                    Finish Configuring Your UPI ID
-                  </h2>
-                  <p className="text-sm text-slate-600 max-w-md mx-auto">
-                    Your account is active! Add your merchant UPI ID and display name in Gateway Setup to generate your live checkout page.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('setup')}
-                    className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    Configure UPI Details
-                  </button>
-                </div>
-              ) : (
-                <>
-                  {!hasCustomAdminPin && (
-                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <p className="text-xs font-medium text-amber-900">
-                        You have not set a custom Secret Business Admin PIN yet (currently defaulting to <span className="font-mono font-bold">123456</span>). Set your own PIN in Gateway Setup before pasting this script on your website.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('setup')}
-                        className="text-xs font-semibold text-amber-900 underline underline-offset-4 cursor-pointer whitespace-nowrap shrink-0"
-                      >
-                        Set Admin PIN
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div>
-                        <h1 className="font-display text-lg font-bold text-slate-900">
-                          Hosted Direct Checkout Link
-                        </h1>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          Share this standalone checkout link anytime, or integrate the website script below into your own site.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => onOpenLiveGateway(client.slug)}
-                        className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                      >
-                        Open Hosted Checkout
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                      <input
-                        type="text"
-                        readOnly
-                        value={baseGatewayUrl}
-                        aria-label="Shareable gateway URL"
-                        className="flex-1 px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => copyText('base-url', baseGatewayUrl)}
-                        className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                      >
-                        {copiedKey === 'base-url' ? (
-                          <>
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                            Copied URL
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" />
-                            Copy URL
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div>
-                        <h2 className="font-display text-xl font-bold text-slate-900">
-                          Website Checkout Integration
-                        </h2>
-                        <p className="text-xs text-slate-500 mt-1">
-                          Switch between your pre-configured website script and the step-by-step setup guide.
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg shrink-0 self-start sm:self-auto">
-                        <button
-                          type="button"
-                          onClick={() => setIntegrationTab('code')}
-                          className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                            integrationTab === 'code'
-                              ? 'bg-white text-slate-900 shadow-xs'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          <Code2 className="w-3.5 h-3.5" />
-                          [CODE] Checkout Script
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setIntegrationTab('guide')}
-                          className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                            integrationTab === 'guide'
-                              ? 'bg-white text-slate-900 shadow-xs'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          <BookOpen className="w-3.5 h-3.5" />
-                          [GUIDE] Integration Steps
-                        </button>
-                      </div>
-                    </div>
-
-                    {integrationTab === 'code' ? (
-                      <div className="p-6 sm:p-8 space-y-5">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                          <div>
-                            <h3 className="font-display text-base font-bold text-slate-900">
-                              [CODE] Copy-Paste Website Checkout Script
-                            </h3>
-                            <p className="text-xs text-slate-500 mt-1">
-                              Self-contained HTML/JS snippet pre-filled with your UPI ID, Entity Name, Brand Color, and Secret Business Admin PIN.
-                            </p>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => copyText('full-script', websiteCheckoutScript)}
-                            className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto"
-                          >
-                            {copiedKey === 'full-script' ? (
-                              <>
-                                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                Script Copied
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3.5 h-3.5" />
-                                Copy Complete Script
-                              </>
-                            )}
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs">
-                          <div>
-                            <p className="text-slate-500">UPI_ID</p>
-                            <p className="font-mono font-semibold text-slate-900 mt-0.5 truncate">
-                              {client.gatewayConfig.upiId}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500">ENTITY_NAME</p>
-                            <p className="font-semibold text-slate-900 mt-0.5 truncate">
-                              {client.entityName}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500">BRAND_COLOR</p>
-                            <p className="font-mono font-semibold text-slate-900 mt-0.5 flex items-center gap-1.5">
-                              <span
-                                className="inline-block w-3 h-3 rounded-xs border border-slate-300"
-                                style={{ backgroundColor: client.gatewayConfig.accentColor }}
-                              />
-                              {client.gatewayConfig.accentColor}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 flex items-center justify-between">
-                              <span>CLIENT_ADMIN_PIN</span>
-                              <button
-                                type="button"
-                                onClick={() => setShowGuidePin((s) => !s)}
-                                className="text-slate-500 hover:text-slate-900 cursor-pointer"
-                                aria-label="Toggle CLIENT_ADMIN_PIN"
-                              >
-                                {showGuidePin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                              </button>
-                            </p>
-                            <p className="font-mono font-semibold text-slate-900 mt-0.5">
-                              {showGuidePin ? effectiveAdminPin : '••••••••'}
-                            </p>
-                          </div>
-                        </div>
-
-                        <pre className="p-4 bg-slate-900 text-slate-100 rounded-xl text-[11px] font-mono overflow-x-auto max-h-96 leading-relaxed">
-                          {websiteCheckoutScript}
-                        </pre>
-
-                        <div className="flex items-center justify-between pt-2 text-xs text-slate-500">
-                          <span>Paste this right before your website&apos;s closing &lt;/body&gt; tag.</span>
-                          <button
-                            type="button"
-                            onClick={() => setIntegrationTab('guide')}
-                            className="font-semibold text-teal-700 hover:text-teal-800 underline underline-offset-4 cursor-pointer whitespace-nowrap"
-                          >
-                            Read Step-by-Step Guide →
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="p-6 sm:p-8 space-y-8">
-                        <div>
-                          <h3 className="font-display text-base font-bold text-slate-900">
-                            [GUIDE] Step-by-Step Website Integration Guide
-                          </h3>
-                          <p className="text-xs text-slate-500 mt-1">
-                            Follow these three steps to connect UPIPay Studio to any website or storefront without writing backend code.
-                          </p>
-                        </div>
-
-                        <div className="space-y-6">
-                          <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                            <p className="font-mono text-xs font-semibold text-teal-700">
-                              Step 1 — Add the Script
-                            </p>
-                            <h4 className="font-display text-sm font-bold text-slate-900">
-                              Paste the script before your closing &lt;/body&gt; tag
-                            </h4>
-                            <p className="text-xs text-slate-600 leading-relaxed">
-                              Switch to the <button type="button" onClick={() => setIntegrationTab('code')} className="font-semibold text-teal-700 underline underline-offset-2 cursor-pointer">[CODE] Checkout Script</button> tab, click <strong>Copy Complete Script</strong>, and paste it right above the closing <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-800">&lt;/body&gt;</code> tag in your website HTML (or inside Shopify <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded">theme.liquid</code>, WordPress footer scripts, or Webflow Footer Code).
-                            </p>
-                          </div>
-
-                          <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                            <p className="font-mono text-xs font-semibold text-teal-700">
-                              Step 2 — Connect Your Checkout Button &amp; Price
-                            </p>
-                            <h4 className="font-display text-sm font-bold text-slate-900">
-                              Tag your final payable price and checkout button
-                            </h4>
-                            <p className="text-xs text-slate-600 leading-relaxed">
-                              Add <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-800">id=&quot;checkout-total&quot;</code> (or <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-800">data-cart-total</code>) to your final price element and <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-800">id=&quot;final-checkout-btn&quot;</code> (or <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-800">data-upipay-checkout</code>) to your Pay/Checkout button. When clicked, the script strips <code className="bg-white border border-slate-200 px-1 rounded">₹</code> and commas, generates an Order ID, and opens your QR modal automatically.
-                            </p>
-                            <pre className="p-3.5 bg-slate-900 text-slate-100 rounded-lg text-[11px] font-mono overflow-x-auto">
-{`<p>Total Payable: <span id="checkout-total">₹1,499</span></p>
-<button id="final-checkout-btn" type="button">Pay Now</button>`}
-                            </pre>
-                          </div>
-
-                          <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                            <p className="font-mono text-xs font-semibold text-teal-700">
-                              Step 3 — How to Access Your Hidden Business Admin Login
-                            </p>
-                            <h4 className="font-display text-sm font-bold text-slate-900">
-                              Private order verification invisible to regular shoppers
-                            </h4>
-                            <p className="text-xs text-slate-600 leading-relaxed">
-                              No public admin button or link is ever displayed on your storefront. Only you can open your hidden Order Verification Panel using either of these secret triggers, followed by your private PIN:
-                            </p>
-
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1 text-xs">
-                              <div className="p-3.5 bg-white border border-slate-200 rounded-lg">
-                                <p className="text-slate-500">Secret URL Parameter</p>
-                                <p className="font-mono font-semibold text-slate-900 mt-1 break-all">
-                                  theirwebsite.com/?upipay_admin=true
-                                </p>
-                              </div>
-                              <div className="p-3.5 bg-white border border-slate-200 rounded-lg">
-                                <p className="text-slate-500">Secret Keyboard Shortcut</p>
-                                <p className="font-mono font-semibold text-slate-900 mt-1">
-                                  Ctrl + Shift + A
-                                </p>
-                              </div>
-                              <div className="p-3.5 bg-white border border-slate-200 rounded-lg">
-                                <p className="text-slate-500 flex items-center justify-between">
-                                  <span>Your Business Admin PIN</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowGuidePin((s) => !s)}
-                                    className="text-slate-500 hover:text-slate-900 cursor-pointer"
-                                    aria-label="Toggle Business Admin PIN"
-                                  >
-                                    {showGuidePin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                                  </button>
-                                </p>
-                                <div className="mt-1 flex items-center justify-between gap-2">
-                                  <span className="font-mono font-semibold text-slate-900">
-                                    {showGuidePin ? effectiveAdminPin : '••••••••'}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => copyText('guide-pin', effectiveAdminPin)}
-                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 hover:text-teal-800 cursor-pointer"
-                                  >
-                                    <KeyRound className="w-3 h-3" />
-                                    {copiedKey === 'guide-pin' ? 'Copied' : 'Copy'}
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <CheckoutSandbox
-                    client={client}
-                    orders={orders}
-                    effectiveAdminPin={effectiveAdminPin}
-                    onRefresh={onRefresh}
-                  />
-                </>
               )}
-            </div>
-          )}
-
-          {activeTab === 'orders' && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="bg-white border border-slate-200 rounded-xl p-5">
-                  <p className="text-xs text-slate-500">Approved Revenue</p>
-                  <p className="font-mono text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-                    {formatInr(approvedVolume)}
-                  </p>
-                </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-5">
-                  <p className="text-xs text-slate-500">Pending UTR Verification</p>
-                  <p className="font-mono text-2xl font-bold text-amber-700 mt-1 tabular-nums">
-                    {pendingOrders.length}
-                  </p>
-                </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-5">
-                  <p className="text-xs text-slate-500">Approved Orders</p>
-                  <p className="font-mono text-2xl font-bold text-emerald-700 mt-1 tabular-nums">
-                    {approvedOrders.length}
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="p-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div>
-                    <h2 className="font-display text-lg font-bold text-slate-900">
-                      Incoming Customer Orders
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Match submitted 12-digit UTRs against your UPI app history before approving.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    {orders.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => exportOrdersCsv(orders, client.entityName)}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer whitespace-nowrap"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        Export CSV
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="px-5 py-3.5 bg-slate-50/70 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-1 p-1 bg-slate-200/60 rounded-lg w-fit">
-                    {(
-                      [
-                        { id: 'ALL', label: 'All' },
-                        { id: 'PENDING_VERIFICATION', label: 'Pending' },
-                        { id: 'APPROVED', label: 'Approved' },
-                        { id: 'REJECTED', label: 'Rejected' },
-                      ] as const
-                    ).map((f) => (
-                      <button
-                        key={f.id}
-                        type="button"
-                        onClick={() => setOrderFilter(f.id)}
-                        className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                          orderFilter === f.id
-                            ? 'bg-white text-slate-900 shadow-xs'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="relative w-full sm:w-64">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={orderSearch}
-                      onChange={(e) => setOrderSearch(e.target.value)}
-                      placeholder="Search Order ID or UTR..."
-                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-teal-700"
-                    />
-                  </div>
-                </div>
-
-                {filteredOrders.length === 0 ? (
-                  <div className="p-10 text-center space-y-3">
-                    <p className="font-display text-sm font-semibold text-slate-900">
-                      {orders.length === 0
-                        ? 'No incoming orders yet'
-                        : 'No orders match your current filter'}
-                    </p>
-                    <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                      {orders.length === 0
-                        ? 'When customers pay on your live gateway and submit their 12-digit UTR, orders will appear here for approval.'
-                        : 'Try clearing the search query or switching the status tab.'}
-                    </p>
-                    {orders.length === 0 && client.status === 'ACTIVE' && (
-                      <button
-                        type="button"
-                        onClick={() => onOpenLiveGateway(client.slug, 999, 'ORD101')}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
-                      >
-                        Preview Live Gateway
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-[11px] font-semibold text-slate-500 bg-slate-50/40">
-                          <th className="py-3 px-5">Order ID</th>
-                          <th className="py-3 px-4">Customer</th>
-                          <th className="py-3 px-4 text-right">Amount</th>
-                          <th className="py-3 px-4">12-Digit UTR</th>
-                          <th className="py-3 px-4">Submitted</th>
-                          <th className="py-3 px-4">Status</th>
-                          <th className="py-3 px-5 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200 text-xs">
-                        {filteredOrders.map((order) => (
-                          <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
-                            <td className="py-3 px-5 font-mono font-semibold text-slate-900 whitespace-nowrap">
-                              {order.orderId}
-                            </td>
-                            <td className="py-3 px-4 text-slate-600 max-w-[180px] truncate">
-                              {order.customerName || 'Guest Customer'}
-                              {order.customerNote ? ` · ${order.customerNote}` : ''}
-                            </td>
-                            <td className="py-3 px-4 text-right font-mono font-semibold text-slate-900 tabular-nums whitespace-nowrap">
-                              {formatInr(order.amount)}
-                            </td>
-                            <td className="py-3 px-4 font-mono text-slate-800 tabular-nums whitespace-nowrap">
-                              <button
-                                type="button"
-                                onClick={() => copyText(`utr-${order.id}`, order.utr)}
-                                className="inline-flex items-center gap-1.5 hover:text-teal-700 cursor-pointer"
-                                title="Copy UTR"
-                              >
-                                {order.utr}
-                                {copiedKey === `utr-${order.id}` ? (
-                                  <Check className="w-3 h-3 text-emerald-600" />
-                                ) : (
-                                  <Copy className="w-3 h-3 text-slate-400" />
-                                )}
-                              </button>
-                            </td>
-                            <td className="py-3 px-4 text-slate-500 whitespace-nowrap tabular-nums">
-                              {formatDateTime(order.createdAt)}
-                            </td>
-                            <td className="py-3 px-4 whitespace-nowrap">
-                              <OrderStatusLabel status={order.status} />
-                            </td>
-                            <td className="py-3 px-5 text-right whitespace-nowrap">
-                              <div className="inline-flex items-center gap-2">
-                                {order.status !== 'APPROVED' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      updateOrderStatus(order.id, 'APPROVED');
-                                      onRefresh();
-                                    }}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-md cursor-pointer"
-                                  >
-                                    <CheckCircle2 className="w-3.5 h-3.5" />
-                                    Approve
-                                  </button>
-                                )}
-                                {order.status !== 'REJECTED' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      updateOrderStatus(order.id, 'REJECTED');
-                                      onRefresh();
-                                    }}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-md cursor-pointer"
-                                  >
-                                    <XCircle className="w-3.5 h-3.5" />
-                                    Reject
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
+            </>
           )}
         </section>
       </div>
