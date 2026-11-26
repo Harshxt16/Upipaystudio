@@ -39,7 +39,7 @@ export function ConciergeGatewayCard({
     setUtrUpdated(false);
     const check = validateStrictActivationUtr(utrInput);
     if (!check.valid) {
-      setUtrError(check.error || 'Enter a valid 12-digit numeric UPI UTR / Reference Number.');
+      setUtrError(check.error || 'Enter a valid alphanumeric UPI UTR / Reference Number (8–32 chars).');
       return;
     }
     setSavingUtr(true);
@@ -419,7 +419,7 @@ export function ConciergeGatewayCard({
                   }}
                   className="text-xs font-semibold text-slate-600 hover:text-slate-900 underline underline-offset-4 cursor-pointer self-start sm:self-auto"
                 >
-                  {showUtrEditor ? 'Hide UTR Editor' : 'Update 12-Digit UTR'}
+                  {showUtrEditor ? 'Hide UTR Editor' : 'Update UTR / Ref ID'}
                 </button>
               )}
             </>
@@ -428,7 +428,7 @@ export function ConciergeGatewayCard({
 
         {utrUpdated && (
           <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-medium text-emerald-700">
-            Your 12-digit UTR reference has been updated for our verification team.
+            Your UTR / Reference ID has been updated for our verification team.
           </div>
         )}
 
@@ -441,19 +441,22 @@ export function ConciergeGatewayCard({
               htmlFor="concierge-utr-edit"
               className="block text-xs font-semibold text-slate-700"
             >
-              Update 12-Digit UPI UTR / Reference Number
+              Update UPI UTR / Reference Number (Varchar)
             </label>
             <div className="flex flex-col sm:flex-row gap-2.5">
               <input
                 id="concierge-utr-edit"
                 type="text"
-                inputMode="numeric"
-                maxLength={12}
+                maxLength={32}
                 required
                 value={utrInput}
-                onChange={(e) => setUtrInput(e.target.value.replace(/\D/g, '').slice(0, 12))}
-                placeholder="412345678901"
-                className="flex-1 px-3 py-2 text-sm font-mono tracking-wider bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700 tabular-nums"
+                onChange={(e) =>
+                  setUtrInput(
+                    e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32)
+                  )
+                }
+                placeholder="e.g. 412345678901 or FP2611268901"
+                className="flex-1 px-3 py-2 text-sm font-mono tracking-wider uppercase bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700 tabular-nums"
               />
               <button
                 type="submit"

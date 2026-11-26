@@ -101,10 +101,10 @@
         },
         "activationUtr": {
           "type": "string",
-          "description": "12-digit numeric UPI UTR reference for the ₹1 lifetime payment.",
-          "minLength": 12,
-          "maxLength": 12,
-          "pattern": "^[0-9]{12}$"
+          "description": "Alphanumeric varchar UPI UTR / transaction reference for the ₹1 lifetime payment.",
+          "minLength": 8,
+          "maxLength": 32,
+          "pattern": "^[A-Za-z0-9_\\-]+$"
         },
         "activationSubmittedAt": {
           "type": "string",
@@ -218,9 +218,9 @@
       "properties": {
         "utr": {
           "type": "string",
-          "minLength": 12,
-          "maxLength": 12,
-          "pattern": "^[0-9]{12}$"
+          "minLength": 8,
+          "maxLength": 32,
+          "pattern": "^[A-Za-z0-9_\\-]+$"
         },
         "clientId": {
           "type": "string",
@@ -250,9 +250,9 @@
       "properties": {
         "utr": {
           "type": "string",
-          "minLength": 12,
-          "maxLength": 12,
-          "pattern": "^[0-9]{12}$"
+          "minLength": 8,
+          "maxLength": 32,
+          "pattern": "^[A-Za-z0-9_\\-]+$"
         },
         "amount": {
           "type": "number"

@@ -291,7 +291,7 @@ export function AdminDashboard({ authUser }: AdminDashboardProps) {
     if (!parsedSimulation.utr || !parsedSimulation.utrValidation?.valid) {
       setSimFeedback({
         type: 'error',
-        text: parsedSimulation.diagnosticMessage || 'Valid 12-digit UTR not found.',
+        text: parsedSimulation.diagnosticMessage || 'Valid alphanumeric UTR / Ref ID not found.',
       });
       return;
     }
@@ -1001,7 +1001,7 @@ export function AdminDashboard({ authUser }: AdminDashboardProps) {
                       </strong>
                     </span>
                     <span>
-                      12-Digit UTR:{' '}
+                      UTR / Ref ID:{' '}
                       <strong className="font-mono text-slate-900">
                         {parsedSimulation.utr || 'Not found'}
                       </strong>
@@ -1077,7 +1077,7 @@ export function AdminDashboard({ authUser }: AdminDashboardProps) {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-slate-200 text-[11px] font-semibold text-slate-500 bg-slate-50/40">
-                      <th className="py-3 px-5">12-Digit UTR</th>
+                      <th className="py-3 px-5">UTR / Ref ID</th>
                       <th className="py-3 px-4">Amount</th>
                       <th className="py-3 px-4">Sender</th>
                       <th className="py-3 px-4">Subject</th>

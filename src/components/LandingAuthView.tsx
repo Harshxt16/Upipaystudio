@@ -229,8 +229,8 @@ export function LandingAuthView({
                 <p className="text-xs text-slate-500 mt-1">Platform commission on orders</p>
               </div>
               <div className="pt-4">
-                <p className="font-mono text-2xl font-semibold text-slate-900 tabular-nums">12-Digit</p>
-                <p className="text-xs text-slate-500 mt-1">UTR verification workflow</p>
+                <p className="font-mono text-2xl font-semibold text-slate-900 tabular-nums">UPI UTR</p>
+                <p className="text-xs text-slate-500 mt-1">Alphanumeric reference tracking</p>
               </div>
             </div>
 
@@ -513,7 +513,7 @@ export function LandingAuthView({
               Three steps from sign-up to your personalized gateway
             </h2>
             <p className="text-sm sm:text-base text-slate-600 mt-2">
-              Every payment routes straight to your own UPI handle with verifiable 12-digit UTR tracking.
+              Every payment routes straight to your own UPI handle with verifiable UPI UTR tracking.
             </p>
           </div>
 
@@ -534,7 +534,7 @@ export function LandingAuthView({
                 One-time ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} lifetime unlock
               </h3>
               <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                Pay ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} once via UPI to {PLATFORM_OWNER_CONFIG.payeeName} and submit your 12-digit UTR for admin verification.
+                Pay ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} once via UPI to {PLATFORM_OWNER_CONFIG.payeeName} and submit your UPI UTR / Reference ID for instant verification.
               </p>
             </div>
 
@@ -590,7 +590,7 @@ export function LandingAuthView({
                   UTR Order Verification
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5">
-                  Customers submit their 12-digit UTR right after paying so you can verify and approve orders directly.
+                  Customers submit their UPI UTR / Reference ID right after paying so you can verify and approve orders directly.
                 </p>
               </div>
 

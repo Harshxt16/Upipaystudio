@@ -50,8 +50,8 @@ export function generateStandaloneHtmlCode(client: ClientAccount): string {
       <label for="order-id">Order Reference</label>
       <input id="order-id" type="text" placeholder="ORD123" />
 
-      <label for="utr">12-Digit UPI UTR / Reference Number</label>
-      <input id="utr" type="text" maxlength="12" placeholder="412345678901" />
+      <label for="utr">UPI UTR / Reference Number (Varchar)</label>
+      <input id="utr" type="text" maxlength="32" placeholder="412345678901 or FP2611268901" style="text-transform:uppercase;" />
 
       <button type="button" id="submit-utr" class="btn btn-outline">Submit Payment UTR</button>
       <div id="status-box" class="status"></div>
@@ -100,9 +100,9 @@ export function generateStandaloneHtmlCode(client: ClientAccount): string {
     updateUpi();
 
     document.getElementById('submit-utr').addEventListener('click', function () {
-      const utr = utrEl.value.replace(/\\D/g, '');
-      if (!/^\\d{12}$/.test(utr)) {
-        alert('Please enter a valid 12-digit UTR number.');
+      const utr = utrEl.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32);
+      if (!/^[A-Z0-9_-]{8,32}$/.test(utr) || !/\\d/.test(utr)) {
+        alert('Please enter a valid UPI UTR / Reference Number (8–32 alphanumeric characters).');
         return;
       }
       statusBox.style.display = 'block';
@@ -169,8 +169,9 @@ export function UpiCheckout({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!/^\\d{12}$/.test(utr)) return;
-    onUtrSubmitted?.({ orderId, amount: numericAmount, utr });
+    const cleaned = utr.trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{8,32}$/.test(cleaned) || !/\\d/.test(cleaned)) return;
+    onUtrSubmitted?.({ orderId, amount: numericAmount, utr: cleaned });
     setSubmitted(true);
     if (GATEWAY_CONFIG.redirectUrl) {
       window.location.href = GATEWAY_CONFIG.redirectUrl;
@@ -198,11 +199,11 @@ export function UpiCheckout({
         />
         <input
           type="text"
-          maxLength={12}
+          maxLength={32}
           value={utr}
-          onChange={(e) => setUtr(e.target.value.replace(/\\D/g, ''))}
-          placeholder="12-Digit UTR Number"
-          style={{ width: '100%', padding: 10, marginBottom: 10, borderRadius: 8, border: '1px solid #cbd5e1' }}
+          onChange={(e) => setUtr(e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32))}
+          placeholder="UPI UTR / Reference Number"
+          style={{ width: '100%', padding: 10, marginBottom: 10, borderRadius: 8, border: '1px solid #cbd5e1', textTransform: 'uppercase' }}
         />
         <button type="submit" style={{ width: '100%', padding: 10, borderRadius: 8, background: '#0f172a', color: '#fff', fontWeight: 600, border: 'none' }}>
           {submitted ? 'UTR Submitted' : 'Confirm Payment UTR'}

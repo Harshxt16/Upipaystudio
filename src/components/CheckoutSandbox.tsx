@@ -155,9 +155,9 @@ export function CheckoutSandbox({
   const handleQrUtrSubmit = (e: FormEvent) => {
     e.preventDefault();
     setUtrError('');
-    const cleaned = utrInput.replace(/\s+/g, '');
+    const cleaned = utrInput.replace(/\s+/g, '').toUpperCase();
     if (!isValidUtr(cleaned)) {
-      setUtrError('Please enter a valid 12-digit numeric UTR (e.g. 412345678901).');
+      setUtrError('Please enter a valid alphanumeric UTR (8–32 chars, e.g. 412345678901 or FP2611268901).');
       return;
     }
     const created = createCustomerOrder({
@@ -170,14 +170,14 @@ export function CheckoutSandbox({
       customerNote: 'Paid via QR',
     });
     setSubmittedOrder(created);
-    setConfirmedMsg('Your 12-digit UTR has been recorded. Verification may take up to 24 hours.');
+    setConfirmedMsg('Your UTR reference has been recorded. Verification may take up to 24 hours.');
     setModalStep('confirmed');
     onRefresh();
   };
 
   const handleUpiAppConfirm = (e: FormEvent) => {
     e.preventDefault();
-    const cleaned = appUtrInput.replace(/\s+/g, '');
+    const cleaned = appUtrInput.replace(/\s+/g, '').toUpperCase();
     const created = createCustomerOrder({
       clientId: client.id,
       clientSlug: client.slug,
@@ -362,7 +362,7 @@ export function CheckoutSandbox({
                     <div>
                       <p className="text-sm font-bold text-slate-900">Pay through QR Code</p>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Scan QR code and enter your 12-digit UTR (verification may take up to 24 hrs)
+                        Scan QR code and enter your UPI UTR / Ref ID (verification may take up to 24 hrs)
                       </p>
                     </div>
                   </button>
@@ -405,7 +405,7 @@ export function CheckoutSandbox({
                   </div>
 
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 leading-relaxed">
-                    <strong>Note:</strong> After paying via QR, enter your 12-digit UTR number below. Verification may take up to <strong>24 hours</strong>.
+                    <strong>Note:</strong> After paying via QR, enter your UPI UTR / Reference Number below. Verification may take up to <strong>24 hours</strong>.
                   </div>
 
                   <form
@@ -417,20 +417,21 @@ export function CheckoutSandbox({
                         htmlFor="sandbox-utr-input"
                         className="block text-xs font-semibold text-slate-700 mb-1"
                       >
-                        12-Digit UPI UTR / Reference Number
+                        UPI UTR / Reference Number (Varchar)
                       </label>
                       <input
                         id="sandbox-utr-input"
                         type="text"
-                        inputMode="numeric"
-                        maxLength={12}
+                        maxLength={32}
                         required
                         value={utrInput}
                         onChange={(e) =>
-                          setUtrInput(e.target.value.replace(/\D/g, '').slice(0, 12))
+                          setUtrInput(
+                            e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32)
+                          )
                         }
-                        placeholder="e.g. 412345678901"
-                        className="w-full px-3.5 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-900 tabular-nums"
+                        placeholder="e.g. 412345678901 or FP2611268901"
+                        className="w-full px-3.5 py-2 text-sm font-mono uppercase bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-900 tabular-nums"
                       />
                     </div>
                     {utrError && (
@@ -500,19 +501,20 @@ export function CheckoutSandbox({
                         htmlFor="sandbox-app-utr"
                         className="block text-xs font-semibold text-slate-700 mb-1"
                       >
-                        12-Digit UTR (Optional if paid via UPI app)
+                        UPI UTR / Ref ID (Optional if paid via UPI app)
                       </label>
                       <input
                         id="sandbox-app-utr"
                         type="text"
-                        inputMode="numeric"
-                        maxLength={12}
+                        maxLength={32}
                         value={appUtrInput}
                         onChange={(e) =>
-                          setAppUtrInput(e.target.value.replace(/\D/g, '').slice(0, 12))
+                          setAppUtrInput(
+                            e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32)
+                          )
                         }
-                        placeholder="Optional 12-digit UTR"
-                        className="w-full px-3.5 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-900 tabular-nums"
+                        placeholder="Optional UTR / Ref ID"
+                        className="w-full px-3.5 py-2 text-sm font-mono uppercase bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-900 tabular-nums"
                       />
                     </div>
                     <button
@@ -679,7 +681,7 @@ export function CheckoutSandbox({
               ) : (
                 <div className="space-y-4">
                   <p className="text-xs text-slate-500">
-                    Cross-check each 12-digit UTR against your UPI/FamPay history before confirming.
+                    Cross-check each UTR / Ref ID against your UPI/FamPay history before confirming.
                   </p>
                   {orders.length === 0 ? (
                     <div className="p-8 text-center border border-slate-200 rounded-lg text-xs text-slate-500">
@@ -692,7 +694,7 @@ export function CheckoutSandbox({
                           <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-500">
                             <th className="py-2.5 px-3">Order ID</th>
                             <th className="py-2.5 px-3 text-right">Amount</th>
-                            <th className="py-2.5 px-3">12-Digit UTR</th>
+                            <th className="py-2.5 px-3">UTR / Ref ID</th>
                             <th className="py-2.5 px-3">Status</th>
                             <th className="py-2.5 px-3 text-right">Action</th>
                           </tr>

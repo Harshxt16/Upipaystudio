@@ -188,7 +188,7 @@ export function generateWebsiteCheckoutScript(params: CheckoutScriptParams): str
             '<div class="upipay-choice">' +
               '<button type="button" class="upipay-choice-btn" id="upipay-choose-qr">' +
                 '<span class="upipay-choice-title">Pay through QR Code</span>' +
-                '<span class="upipay-choice-desc">Scan QR from any device &amp; submit 12-digit UTR (verification up to 24 hrs)</span>' +
+                '<span class="upipay-choice-desc">Scan QR from any device &amp; submit UPI UTR / Ref ID (verification up to 24 hrs)</span>' +
               '</button>' +
               '<button type="button" class="upipay-choice-btn" id="upipay-choose-upi">' +
                 '<span class="upipay-choice-title">Pay through UPI App</span>' +
@@ -224,10 +224,10 @@ export function generateWebsiteCheckoutScript(params: CheckoutScriptParams): str
               '<div class="upipay-qr-box"><img id="upipay-qr-img" alt="UPI QR" style="width:190px;height:190px;display:block;object-fit:contain;" /></div>' +
               '<p style="font-size:11px;color:#64748b;margin:8px 0 0;">UPI ID: <strong style="color:#0f172a;font-family:monospace;">' + escapeHtml(CONFIG.upiId) + '</strong></p>' +
             '</div>' +
-            '<div class="upipay-note"><strong>Note:</strong> After paying via QR, enter your 12-digit UTR number below. Verification may take up to <strong>24 hours</strong>.</div>' +
+            '<div class="upipay-note"><strong>Note:</strong> After paying via QR, enter your UPI UTR / Reference Number below. Verification may take up to <strong>24 hours</strong>.</div>' +
             '<form id="upipay-utr-form">' +
-              '<label style="font-size:12px;font-weight:600;color:#334155;">12-Digit UPI UTR / Reference Number</label>' +
-              '<input id="upipay-utr-input" class="upipay-input" type="text" inputmode="numeric" maxlength="12" placeholder="e.g. 412345678901" required />' +
+              '<label style="font-size:12px;font-weight:600;color:#334155;">UPI UTR / Reference Number (Varchar)</label>' +
+              '<input id="upipay-utr-input" class="upipay-input" type="text" maxlength="32" placeholder="e.g. 412345678901 or FP2611268901" style="text-transform:uppercase;" required />' +
               '<div id="upipay-utr-msg"></div>' +
               '<button type="submit" class="upipay-btn">Submit UTR &amp; Place Order</button>' +
             '</form>' +
@@ -240,15 +240,15 @@ export function generateWebsiteCheckoutScript(params: CheckoutScriptParams): str
 
       var utrInput = backdrop.querySelector('#upipay-utr-input');
       utrInput.addEventListener('input', function () {
-        utrInput.value = utrInput.value.replace(/\\D/g, '').slice(0, 12);
+        utrInput.value = utrInput.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32);
       });
 
       backdrop.querySelector('#upipay-utr-form').addEventListener('submit', function (ev) {
         ev.preventDefault();
-        var utr = utrInput.value.trim();
+        var utr = utrInput.value.trim().toUpperCase();
         var msgBox = backdrop.querySelector('#upipay-utr-msg');
-        if (!/^\\d{12}$/.test(utr)) {
-          msgBox.innerHTML = '<div class="upipay-err">Please enter a valid 12-digit numeric UTR.</div>';
+        if (!/^[A-Z0-9_-]{8,32}$/.test(utr) || !/\\d/.test(utr)) {
+          msgBox.innerHTML = '<div class="upipay-err">Please enter a valid UPI UTR / Reference ID (8–32 alphanumeric characters).</div>';
           return;
         }
         var orders = loadOrders();
@@ -261,7 +261,7 @@ export function generateWebsiteCheckoutScript(params: CheckoutScriptParams): str
           createdAt: new Date().toISOString()
         });
         saveOrders(orders);
-        renderConfirmedView(utr, 'Your 12-digit UTR has been recorded. Verification may take up to 24 hours.');
+        renderConfirmedView(utr, 'Your UTR reference has been recorded. Verification may take up to 24 hours.');
       });
     }
 
@@ -288,8 +288,8 @@ export function generateWebsiteCheckoutScript(params: CheckoutScriptParams): str
                 ? '<p style="font-size:14px;font-weight:700;color:#0f172a;margin:0 0 6px;">Did you complete the payment in your UPI app?</p>' +
                   '<p style="font-size:12px;color:#64748b;margin:0 0 14px;">Confirm your payment status to return to the page.</p>' +
                   '<form id="upipay-app-confirm-form">' +
-                    '<label style="font-size:12px;font-weight:600;color:#334155;">12-Digit UTR (Optional if paid via UPI app)</label>' +
-                    '<input id="upipay-app-utr" class="upipay-input" type="text" inputmode="numeric" maxlength="12" placeholder="Optional 12-digit UTR" />' +
+                    '<label style="font-size:12px;font-weight:600;color:#334155;">UPI UTR / Ref ID (Optional if paid via UPI app)</label>' +
+                    '<input id="upipay-app-utr" class="upipay-input" type="text" maxlength="32" placeholder="Optional UTR / Ref ID" style="text-transform:uppercase;" />' +
                     '<button type="submit" class="upipay-btn">Yes, Payment Completed</button>' +
                   '</form>' +
                   '<button type="button" id="upipay-not-paid-btn" class="upipay-btn upipay-btn-danger">No, Payment Not Done</button>'
@@ -310,23 +310,24 @@ export function generateWebsiteCheckoutScript(params: CheckoutScriptParams): str
         if (confirmForm) {
           var appUtrInput = backdrop.querySelector('#upipay-app-utr');
           appUtrInput.addEventListener('input', function () {
-            appUtrInput.value = appUtrInput.value.replace(/\\D/g, '').slice(0, 12);
+            appUtrInput.value = appUtrInput.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32);
           });
           confirmForm.addEventListener('submit', function (ev) {
             ev.preventDefault();
-            var utr = appUtrInput.value.trim();
+            var utr = appUtrInput.value.trim().toUpperCase();
+            var validAppUtr = /^[A-Z0-9_-]{8,32}$/.test(utr) && /\\d/.test(utr);
             var orders = loadOrders();
             orders.unshift({
               orderId: orderId,
               amount: amount,
-              utr: /^\\d{12}$/.test(utr) ? utr : 'UPI-APP-PAID',
+              utr: validAppUtr ? utr : 'UPI-APP-PAID',
               method: 'UPI_APP',
               status: 'PENDING_VERIFICATION',
               createdAt: new Date().toISOString()
             });
             saveOrders(orders);
             renderConfirmedView(
-              /^\\d{12}$/.test(utr) ? utr : 'Confirmed via UPI App',
+              validAppUtr ? utr : 'Confirmed via UPI App',
               'Payment confirmed. Returning you to the merchant page.'
             );
           });
@@ -501,13 +502,13 @@ export function generateWebsiteCheckoutScript(params: CheckoutScriptParams): str
             '<div class="upipay-header">' +
               '<div>' +
                 '<h2 class="upipay-title">Incoming Orders · ' + escapeHtml(CONFIG.entityName) + '</h2>' +
-                '<p class="upipay-sub">Cross-check 12-digit UTRs against your UPI / FamPay history before confirming.</p>' +
+                '<p class="upipay-sub">Cross-check UTR / Ref IDs against your UPI / FamPay history before confirming.</p>' +
               '</div>' +
               '<button type="button" class="upipay-close" aria-label="Close">&times;</button>' +
             '</div>' +
             '<div style="overflow-x:auto;">' +
               '<table class="upipay-table">' +
-                '<thead><tr><th>Order ID</th><th>Amount</th><th>12-Digit UTR</th><th>Status</th><th style="text-align:right;">Action</th></tr></thead>' +
+                '<thead><tr><th>Order ID</th><th>Amount</th><th>UTR / Ref ID</th><th>Status</th><th style="text-align:right;">Action</th></tr></thead>' +
                 '<tbody>' + rowsHtml + '</tbody>' +
               '</table>' +
             '</div>' +

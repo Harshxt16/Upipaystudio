@@ -206,7 +206,7 @@ export function ClientDashboard({
     setActivationError('');
     const check = validateStrictActivationUtr(activationUtr);
     if (!check.valid) {
-      setActivationError(check.error || 'Enter a valid 12-digit numeric UPI UTR / Reference Number.');
+      setActivationError(check.error || 'Enter a valid alphanumeric UPI UTR / Reference Number (8–32 chars).');
       return;
     }
     setSubmittingActivation(true);
@@ -226,7 +226,7 @@ export function ClientDashboard({
     const check = validateStrictActivationUtr(activationAppUtr);
     if (!check.valid) {
       setActivationError(
-        check.error || 'Enter the 12-digit UPI UTR / Reference Number shown in your UPI app receipt.'
+        check.error || 'Enter the UPI UTR / Reference Number (8–32 chars) shown in your UPI app receipt.'
       );
       return;
     }
@@ -572,7 +572,7 @@ export function ClientDashboard({
                     <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
                       <p className="font-semibold">Previous UTR Submission Rejected</p>
                       <p className="mt-1">
-                        {client.rejectedReason || 'Please verify your 12-digit UTR in your UPI app and resubmit.'}
+                        {client.rejectedReason || 'Please verify your UTR / Reference ID in your UPI app and resubmit.'}
                       </p>
                     </div>
                   )}
@@ -611,7 +611,7 @@ export function ClientDashboard({
                               <div>
                                 <p className="text-sm font-bold text-slate-900">Pay through QR Code</p>
                                 <p className="text-xs text-slate-500 mt-1">
-                                  Scan QR code &amp; enter 12-digit UTR (verification may take up to 24 hrs)
+                                  Scan QR code &amp; enter your UPI UTR / Ref ID (auto-sync or up to 24 hrs)
                                 </p>
                               </div>
                             </button>
@@ -676,7 +676,7 @@ export function ClientDashboard({
                             </button>
 
                             <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 leading-relaxed">
-                              <strong>Note:</strong> After paying ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} via QR, enter your 12-digit UTR number below. Verification may take up to <strong>24 hours</strong>.
+                              <strong>Note:</strong> After paying ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} via QR, enter your UTR / Reference Number below. Auto-sync activates instantly when matched, or manually within <strong>24 hours</strong>.
                             </div>
 
                             <form onSubmit={handleActivationSubmit} className="space-y-4">
@@ -685,20 +685,21 @@ export function ClientDashboard({
                                   htmlFor="activation-utr"
                                   className="block text-xs font-semibold text-slate-700 mb-1.5"
                                 >
-                                  12-Digit UPI UTR / Reference Number
+                                  UPI UTR / Reference Number (Alphanumeric Varchar)
                                 </label>
                                 <input
                                   id="activation-utr"
                                   type="text"
-                                  inputMode="numeric"
-                                  maxLength={12}
+                                  maxLength={32}
                                   required
                                   value={activationUtr}
                                   onChange={(e) =>
-                                    setActivationUtr(e.target.value.replace(/\D/g, '').slice(0, 12))
+                                    setActivationUtr(
+                                      e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32)
+                                    )
                                   }
-                                  placeholder="412345678901"
-                                  className="w-full px-3.5 py-2.5 text-base font-mono tracking-wider bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700 tabular-nums"
+                                  placeholder="e.g. 412345678901 or FP2611268901"
+                                  className="w-full px-3.5 py-2.5 text-base font-mono tracking-wider uppercase bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700 tabular-nums"
                                 />
                               </div>
 
@@ -772,20 +773,21 @@ export function ClientDashboard({
                                 htmlFor="activation-app-utr"
                                 className="block text-xs font-semibold text-slate-700 mb-1.5"
                               >
-                                12-Digit UTR / Reference Number (From UPI Receipt)
+                                UPI UTR / Reference Number (From UPI Receipt)
                               </label>
                               <input
                                 id="activation-app-utr"
                                 type="text"
-                                inputMode="numeric"
-                                maxLength={12}
+                                maxLength={32}
                                 required
                                 value={activationAppUtr}
                                 onChange={(e) =>
-                                  setActivationAppUtr(e.target.value.replace(/\D/g, '').slice(0, 12))
+                                  setActivationAppUtr(
+                                    e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32)
+                                  )
                                 }
-                                placeholder="412345678901"
-                                className="w-full px-3.5 py-2.5 text-sm font-mono tracking-wider bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700 tabular-nums"
+                                placeholder="e.g. 412345678901 or FP2611268901"
+                                className="w-full px-3.5 py-2.5 text-sm font-mono tracking-wider uppercase bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700 tabular-nums"
                               />
                             </div>
                             {activationError && (

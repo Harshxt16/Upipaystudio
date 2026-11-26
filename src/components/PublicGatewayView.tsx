@@ -164,9 +164,9 @@ export function PublicGatewayView({
       return;
     }
 
-    const cleanedUtr = utrInput.replace(/\s+/g, '');
+    const cleanedUtr = utrInput.replace(/\s+/g, '').toUpperCase();
     if (!isValidUtr(cleanedUtr)) {
-      setError('Please enter a valid 12-digit numeric UPI UTR / Reference Number.');
+      setError('Please enter a valid UPI UTR / Reference Number (8–32 alphanumeric characters).');
       return;
     }
 
@@ -181,7 +181,7 @@ export function PublicGatewayView({
     });
     setSubmittedOrder(created);
     setConfirmationMessage(
-      'Your 12-digit UTR has been logged. Verification may take up to 24 hours.'
+      'Your UTR reference has been logged. Verification may take up to 24 hours.'
     );
     setStep('confirmed');
   };
@@ -189,7 +189,7 @@ export function PublicGatewayView({
   const handleConfirmUpiAppReturn = (e: FormEvent) => {
     e.preventDefault();
     setError('');
-    const cleaned = appUtrInput.replace(/\s+/g, '');
+    const cleaned = appUtrInput.replace(/\s+/g, '').toUpperCase();
     const created = createCustomerOrder({
       clientId: client.id,
       clientSlug: client.slug,
@@ -450,7 +450,7 @@ export function PublicGatewayView({
                           <div>
                             <p className="text-sm font-bold text-slate-900">Pay through QR</p>
                             <p className="text-xs text-slate-500 mt-0.5">
-                              Scan QR &amp; enter 12-digit UTR (up to 24 hrs verification)
+                              Scan QR &amp; enter UPI UTR / Ref ID (up to 24 hrs verification)
                             </p>
                           </div>
                         </button>
@@ -510,7 +510,7 @@ export function PublicGatewayView({
                     </div>
 
                     <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 leading-relaxed">
-                      <strong>Note:</strong> After scanning and completing payment, submit your 12-digit UTR number below. Verification may take up to <strong>24 hours</strong>.
+                      <strong>Note:</strong> After scanning and completing payment, submit your UPI UTR / Reference Number below. Verification may take up to <strong>24 hours</strong>.
                     </div>
 
                     <form onSubmit={handleSubmitQrOrder} className="space-y-4">
@@ -519,20 +519,21 @@ export function PublicGatewayView({
                           htmlFor="customer-utr"
                           className="block text-xs font-semibold text-slate-700 mb-1.5"
                         >
-                          12-Digit UPI UTR / Reference Number
+                          UPI UTR / Reference Number (Varchar)
                         </label>
                         <input
                           id="customer-utr"
                           type="text"
-                          inputMode="numeric"
-                          maxLength={12}
+                          maxLength={32}
                           required
                           value={utrInput}
                           onChange={(e) =>
-                            setUtrInput(e.target.value.replace(/\D/g, '').slice(0, 12))
+                            setUtrInput(
+                              e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32)
+                            )
                           }
-                          placeholder="Enter 12-digit UTR (e.g. 412345678901)"
-                          className="w-full px-3.5 py-2.5 text-base font-mono tracking-wider bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/15 focus:border-slate-900 tabular-nums"
+                          placeholder="Enter UTR / Ref ID (e.g. 412345678901 or FP2611268901)"
+                          className="w-full px-3.5 py-2.5 text-base font-mono tracking-wider uppercase bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/15 focus:border-slate-900 tabular-nums"
                         />
                       </div>
 
@@ -547,7 +548,7 @@ export function PublicGatewayView({
                         className="w-full py-3 px-5 text-sm font-semibold text-white rounded-lg transition-opacity hover:opacity-90 cursor-pointer whitespace-nowrap"
                         style={{ backgroundColor: accentColor }}
                       >
-                        Submit 12-Digit UTR &amp; Place Order
+                        Submit UTR &amp; Place Order
                       </button>
                     </form>
                   </div>
@@ -606,19 +607,20 @@ export function PublicGatewayView({
                           htmlFor="app-utr"
                           className="block text-xs font-semibold text-slate-700 mb-1.5"
                         >
-                          12-Digit UTR (Optional if paid via UPI app)
+                          UPI UTR / Ref ID (Optional if paid via UPI app)
                         </label>
                         <input
                           id="app-utr"
                           type="text"
-                          inputMode="numeric"
-                          maxLength={12}
+                          maxLength={32}
                           value={appUtrInput}
                           onChange={(e) =>
-                            setAppUtrInput(e.target.value.replace(/\D/g, '').slice(0, 12))
+                            setAppUtrInput(
+                              e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 32)
+                            )
                           }
-                          placeholder="Optional 12-digit UTR"
-                          className="w-full px-3.5 py-2.5 text-sm font-mono bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-900 tabular-nums"
+                          placeholder="Optional UTR / Ref ID"
+                          className="w-full px-3.5 py-2.5 text-sm font-mono uppercase bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-900 tabular-nums"
                         />
                       </div>
                       <button

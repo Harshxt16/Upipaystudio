@@ -17,6 +17,9 @@ export interface FamPayEmailParseResult {
 }
 
 const KNOWN_DUMMY_UTRS = new Set([
+  '00000000',
+  '11111111',
+  '12345678',
   '000000000000',
   '111111111111',
   '222222222222',
@@ -38,16 +41,33 @@ const KNOWN_DUMMY_UTRS = new Set([
   '123412341234',
   '123123123123',
   '121212121212',
+  'TEST12345678',
+  'DUMMY1234567',
+  'SAMPLE123456',
+  'FAKE12345678',
 ]);
 
-export function validateStrictActivationUtr(rawUtr: string): StrictUtrValidationResult {
-  const cleaned = rawUtr.replace(/\s+/g, '').trim();
+export function normalizeVarcharUtr(rawUtr: string): string {
+  return rawUtr.replace(/\s+/g, '').trim().toUpperCase();
+}
 
-  if (!/^\d{12}$/.test(cleaned)) {
+export function validateStrictActivationUtr(rawUtr: string): StrictUtrValidationResult {
+  const cleaned = normalizeVarcharUtr(rawUtr);
+
+  if (!/^[A-Z0-9_-]{8,32}$/.test(cleaned)) {
     return {
       valid: false,
       cleaned,
-      error: 'UTR must be an exact 12-digit numeric reference number.',
+      error: 'UTR must be an 8 to 32 character alphanumeric reference (letters, digits, - or _).',
+    };
+  }
+
+  // Must contain at least one digit to prevent plain English word entries
+  if (!/\d/.test(cleaned)) {
+    return {
+      valid: false,
+      cleaned,
+      error: 'Invalid UTR: transaction reference must include digits.',
     };
   }
 
@@ -59,17 +79,33 @@ export function validateStrictActivationUtr(rawUtr: string): StrictUtrValidation
     };
   }
 
-  // Reject repeating digit patterns (e.g. 111111111111, 121212121212, 123123123123, 123412341234)
-  if (/^(\d)\1{11}$/.test(cleaned) || /^(\d{2})\1{5}$/.test(cleaned) || /^(\d{3})\1{3}$/.test(cleaned) || /^(\d{4})\1{2}$/.test(cleaned) || /^(\d{6})\1$/.test(cleaned)) {
+  const core = cleaned.replace(/[_-]/g, '');
+  if (core.length < 8) {
     return {
       valid: false,
       cleaned,
-      error: 'Invalid UTR: repeated digit sequences are not allowed.',
+      error: 'UTR must contain at least 8 alphanumeric characters.',
     };
   }
 
-  // Reject ascending or descending runs inside standard digit cycles
-  if ('01234567890123456789'.includes(cleaned) || '98765432109876543210'.includes(cleaned)) {
+  // Reject repeating character patterns (e.g. AAAAAAAA1111, 111111111111, ABABABABABAB, 123123123123)
+  if (
+    /^([A-Z0-9])\1+$/.test(core) ||
+    /^([A-Z0-9]{2,4})\1{2,}$/.test(core) ||
+    /([A-Z0-9])\1{6,}/.test(core)
+  ) {
+    return {
+      valid: false,
+      cleaned,
+      error: 'Invalid UTR: repeated character sequences are not allowed.',
+    };
+  }
+
+  // Reject sequential digit runs inside standard numeric cycles
+  if (
+    /^\d+$/.test(core) &&
+    ('01234567890123456789'.includes(core) || '98765432109876543210'.includes(core))
+  ) {
     return {
       valid: false,
       cleaned,
@@ -77,12 +113,12 @@ export function validateStrictActivationUtr(rawUtr: string): StrictUtrValidation
     };
   }
 
-  // Reject low-entropy UTRs (<= 2 distinct digits or 7+ consecutive identical digits)
-  if (new Set(cleaned.split('')).size <= 2 || /(\d)\1{6,}/.test(cleaned)) {
+  // Reject ultra-low entropy strings (<= 2 unique characters)
+  if (new Set(core.split('')).size <= 2) {
     return {
       valid: false,
       cleaned,
-      error: 'Invalid UTR: please enter the genuine 12-digit UPI UTR from your receipt.',
+      error: 'Invalid UTR: please enter the genuine UPI UTR / transaction ID from your receipt.',
     };
   }
 
@@ -113,20 +149,21 @@ export function parseFamPayEmailText(input: {
       .map((m) => Number(m[1].replace(/,/g, '')))
       .filter((n) => Number.isFinite(n) && n > 0);
     if (parsedAmounts.length > 0) {
-      // Prefer exact expected fee if multiple amounts appear in email text, else take first
       amount = parsedAmounts.find((n) => n === expectedAmount) ?? parsedAmounts[0];
     }
   }
 
-  // Extract 12-digit UTR / UPI Reference
+  // Extract alphanumeric varchar UTR / UPI Reference (8-32 chars)
   let utr: string | null = null;
   const labeledUtrMatch = combined.match(
-    /(?:utr|upi\s*(?:ref(?:erence)?|txn|transaction)?\s*(?:id|no\.?|number)?|ref(?:erence)?\s*(?:no\.?|id|number)?)[:\s#-]*(\d{12})\b/i
+    /(?:utr|upi\s*(?:ref(?:erence)?|txn|transaction)?\s*(?:id|no\.?|number)?|ref(?:erence)?\s*(?:no\.?|id|number)|txn\s*(?:id|no\.?|number)|transaction\s*(?:id|ref(?:erence)?))[:\s#-]*([A-Za-z0-9_-]{8,32})\b/i
   );
   if (labeledUtrMatch?.[1]) {
-    utr = labeledUtrMatch[1];
+    utr = normalizeVarcharUtr(labeledUtrMatch[1]);
   } else {
-    const bareMatches = [...combined.matchAll(/\b(\d{12})\b/g)].map((m) => m[1]);
+    const bareMatches = [
+      ...combined.matchAll(/\b(?=[A-Za-z0-9_-]*\d)([A-Za-z0-9_-]{10,32})\b/g),
+    ].map((m) => normalizeVarcharUtr(m[1]));
     if (bareMatches.length > 0) {
       utr = bareMatches.find((candidate) => validateStrictActivationUtr(candidate).valid) ?? bareMatches[0];
     }
@@ -138,15 +175,15 @@ export function parseFamPayEmailText(input: {
 
   let diagnosticMessage = '';
   if (!utr) {
-    diagnosticMessage = 'Could not detect a 12-digit UPI UTR / Reference number in the email text.';
+    diagnosticMessage = 'Could not detect a valid alphanumeric UTR / Reference ID in the email text.';
   } else if (!utrValidation?.valid) {
     diagnosticMessage = utrValidation?.error || 'Extracted UTR failed anti-fraud format validation.';
   } else if (amount === null) {
-    diagnosticMessage = '12-digit UTR detected, but no INR/₹ payment amount was found.';
+    diagnosticMessage = 'UTR detected, but no INR/₹ payment amount was found.';
   } else if (!exactAmountMatch) {
     diagnosticMessage = `Amount lock rejected auto-approval: extracted ₹${amount}, but exact ₹${expectedAmount} is required.`;
   } else {
-    diagnosticMessage = `Verified match criteria: valid 12-digit UTR and exact ₹${expectedAmount} credit amount.`;
+    diagnosticMessage = `Verified match criteria: valid varchar UTR (${utr}) and exact ₹${expectedAmount} credit amount.`;
   }
 
   return {
@@ -171,7 +208,7 @@ export function generateFamPayAppsScript(params: {
   const emailLabel = params.notificationEmail.trim() || 'dhirajxstream@gmail.com';
 
   return `/**
- * UPIPay Studio — Automated FamPay Gmail Alert Sync
+ * UPIPay Studio — Automated FamPay Gmail Alert Sync (Varchar UTR Support)
  * Notification Gmail: ${emailLabel}
  * Runs every 1 minute via Google Apps Script Time-Driven Trigger.
  */
@@ -197,10 +234,11 @@ function syncFamPayAlertsToWebhook() {
       var amountMatch = combined.match(/(?:₹|rs\\.?|inr)\\s*([0-9,]+(?:\\.[0-9]{1,2})?)/i);
       var amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
 
-      // Extract 12-digit UPI Reference / UTR Number
-      var labeledUtr = combined.match(/(?:utr|upi\\s*(?:ref(?:erence)?|txn|transaction)?\\s*(?:id|no\\.?|number)?|ref(?:erence)?\\s*(?:no\\.?|id|number)?)[:\\s#-]*(\\d{12})\\b/i);
-      var bareUtr = combined.match(/\\b(\\d{12})\\b/);
-      var utr = labeledUtr ? labeledUtr[1] : (bareUtr ? bareUtr[1] : null);
+      // Extract alphanumeric varchar UPI Reference / UTR Number (8-32 chars)
+      var labeledUtr = combined.match(/(?:utr|upi\\s*(?:ref(?:erence)?|txn|transaction)?\\s*(?:id|no\\.?|number)?|ref(?:erence)?\\s*(?:no\\.?|id|number)|txn\\s*(?:id|no\\.?|number)|transaction\\s*(?:id|ref(?:erence)?))[:\\s#-]*([A-Za-z0-9_-]{8,32})\\b/i);
+      var bareUtr = combined.match(/\\b(?=[A-Za-z0-9_-]*\\d)([A-Za-z0-9_-]{10,32})\\b/);
+      var rawUtr = labeledUtr ? labeledUtr[1] : (bareUtr ? bareUtr[1] : null);
+      var utr = rawUtr ? rawUtr.toUpperCase() : null;
 
       if (!utr || !amount) {
         continue;
@@ -239,7 +277,7 @@ export const SAMPLE_FAMPAY_EMAILS = {
     label: `Valid ₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Credit`,
     senderEmail: 'alerts@fampay.in',
     subject: `FamPay Alert: You received ₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} via UPI`,
-    body: `Hi Harshit Singh,\nYou have received Rs. ${PLATFORM_OWNER_CONFIG.lifetimeFeeInr}.00 in your FamPay account (8130799171@fam) via UPI.\nUPI Reference / UTR Number: 431298765432\nStatus: Credited successfully.`,
+    body: `Hi Harshit Singh,\nYou have received Rs. ${PLATFORM_OWNER_CONFIG.lifetimeFeeInr}.00 in your FamPay account (8130799171@fam) via UPI.\nUPI Reference / UTR Number: FP2611268901AB\nStatus: Credited successfully.`,
   },
   wrongAmount: {
     label: 'Wrong Amount (₹199)',

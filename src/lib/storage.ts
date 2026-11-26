@@ -346,7 +346,7 @@ export async function submitActivationUtr(
 ): Promise<ActivationSubmitResult> {
   const validation = validateStrictActivationUtr(utr);
   if (!validation.valid) {
-    throw new Error(validation.error || 'Enter a valid 12-digit numeric UPI UTR.');
+    throw new Error(validation.error || 'Enter a valid alphanumeric UPI UTR / Reference ID (8–32 chars).');
   }
 
   const cleanedUtr = validation.cleaned;
@@ -453,8 +453,11 @@ export async function adminApproveClient(clientId: string): Promise<void> {
   }
 
   const clientData = clientSnap.data() as Record<string, unknown>;
-  const rawUtr = typeof clientData.activationUtr === 'string' ? clientData.activationUtr.trim() : '';
-  const hasStrictUtr = /^\d{12}$/.test(rawUtr);
+  const rawUtr =
+    typeof clientData.activationUtr === 'string'
+      ? clientData.activationUtr.trim().toUpperCase()
+      : '';
+  const hasStrictUtr = /^[A-Za-z0-9_-]{8,32}$/.test(rawUtr);
 
   if (hasStrictUtr) {
     const usedRef = doc(db, 'used_utrs', rawUtr);
@@ -645,7 +648,7 @@ export async function ingestFamPayAlertFromAdmin(input: {
 }> {
   const validation = validateStrictActivationUtr(input.utr);
   if (!validation.valid) {
-    throw new Error(validation.error || 'Invalid 12-digit UTR.');
+    throw new Error(validation.error || 'Invalid alphanumeric UTR / Reference ID.');
   }
   const cleanedUtr = validation.cleaned;
 
@@ -880,7 +883,8 @@ export function isValidUpiId(upi: string): boolean {
 }
 
 export function isValidUtr(utr: string): boolean {
-  return /^\d{12}$/.test(utr.trim());
+  const cleaned = utr.replace(/\s+/g, '').trim();
+  return /^[A-Za-z0-9_-]{8,32}$/.test(cleaned) && /\d/.test(cleaned);
 }
 
 export function isValidOptionalUrl(url: string): boolean {
@@ -956,7 +960,7 @@ export function buildGatewayUrl(params: {
 }
 
 export function exportOrdersCsv(orders: CustomerOrder[], entityName: string): void {
-  const headers = ['Order ID', 'Amount (INR)', '12-Digit UTR', 'Customer', 'Note', 'Status', 'Submitted At'];
+  const headers = ['Order ID', 'Amount (INR)', 'UTR / Ref ID', 'Customer', 'Note', 'Status', 'Submitted At'];
   const rows = orders.map((o) => [
     o.orderId,
     o.amount.toFixed(2),
