@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Lock,
   LogOut,
+  RefreshCw,
   Search,
   ShieldCheck,
   XCircle,
@@ -150,14 +151,24 @@ export function AdminDashboard({
           </h1>
         </div>
 
-        <button
-          type="button"
-          onClick={handleLock}
-          className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer whitespace-nowrap self-start sm:self-auto"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-          Lock Admin Panel
-        </button>
+        <div className="flex items-center gap-2.5 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer whitespace-nowrap"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={handleLock}
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer whitespace-nowrap"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Lock Admin Panel
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

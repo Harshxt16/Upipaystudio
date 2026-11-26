@@ -67,10 +67,19 @@ export default function App() {
       refreshData();
       setRoute(parseRouteFromUrl());
     };
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        refreshData();
+      }
+    };
     window.addEventListener('popstate', onPopState);
+    window.addEventListener('focus', refreshData);
+    document.addEventListener('visibilitychange', onFocusOrVisible);
     return () => {
       unsubscribe();
       window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('focus', refreshData);
+      document.removeEventListener('visibilitychange', onFocusOrVisible);
     };
   }, [refreshData]);
 
@@ -78,6 +87,7 @@ export default function App() {
     try {
       const url = new URL(window.location.href);
       url.search = '';
+      url.hash = '';
       Object.entries(searchParams).forEach(([key, val]) => {
         if (val) url.searchParams.set(key, val);
       });
@@ -85,6 +95,7 @@ export default function App() {
     } catch {
       // Fallback to in-memory route state if history API is restricted
     }
+    refreshData();
     setRoute(nextRoute);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
