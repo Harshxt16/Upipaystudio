@@ -1,5 +1,12 @@
 import { FormEvent, useState } from 'react';
-import { User, signInWithPopup, signOut } from 'firebase/auth';
+import {
+  User,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  updateProfile,
+} from 'firebase/auth';
 import {
   ArrowRight,
   Check,
@@ -21,6 +28,33 @@ interface LandingAuthViewProps {
   onOpenAdmin: () => void;
 }
 
+function formatAuthError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (raw.includes('auth/email-already-in-use')) {
+    return 'An account with this email address already exists. Please switch to Log In.';
+  }
+  if (
+    raw.includes('auth/invalid-credential') ||
+    raw.includes('auth/wrong-password') ||
+    raw.includes('auth/user-not-found')
+  ) {
+    return 'Invalid email address or password.';
+  }
+  if (raw.includes('auth/weak-password')) {
+    return 'Password must be at least 6 characters.';
+  }
+  if (raw.includes('auth/invalid-email')) {
+    return 'Please enter a valid email address.';
+  }
+  if (raw.includes('auth/operation-not-allowed') || raw.includes('CONFIGURATION_NOT_FOUND')) {
+    return 'Email/Password sign-in must be enabled in Firebase Console under Authentication → Sign-in method.';
+  }
+  if (raw.includes('auth/too-many-requests')) {
+    return 'Too many attempts. Please wait a moment and try again.';
+  }
+  return raw;
+}
+
 export function LandingAuthView({
   authUser,
   needsProfileCompletion,
@@ -30,12 +64,24 @@ export function LandingAuthView({
   const [mode, setMode] = useState<'signup' | 'login'>('signup');
   const [fullName, setFullName] = useState(authUser?.displayName || '');
   const [entityName, setEntityName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const handleGoogleAuth = async (e: FormEvent) => {
+  const handleEmailPasswordSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail.includes('@')) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
 
     if (mode === 'signup') {
       if (fullName.trim().length < 2) {
@@ -44,6 +90,45 @@ export function LandingAuthView({
       }
       if (entityName.trim().length < 2) {
         setError('Please enter your business or entity name (minimum 2 characters).');
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    try {
+      if (mode === 'signup') {
+        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+        await updateProfile(cred.user, { displayName: fullName.trim() }).catch(() => {});
+        const created = await createClientAccount({
+          uid: cred.user.uid,
+          email: cred.user.email || cleanEmail,
+          fullName: fullName.trim(),
+          entityName: entityName.trim(),
+        });
+        onAuthenticated(created);
+      } else {
+        const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        const existing = await getClientAccountOnce(cred.user.uid);
+        if (existing) {
+          onAuthenticated(existing);
+        }
+      }
+    } catch (err) {
+      setError(formatAuthError(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleGoogleAuth = async () => {
+    setError('');
+    if (mode === 'signup') {
+      if (fullName.trim().length < 2) {
+        setError('Please enter your Full Name and Business Name above before continuing with Google.');
+        return;
+      }
+      if (entityName.trim().length < 2) {
+        setError('Please enter your Business / Entity Name above before continuing with Google.');
         return;
       }
     }
@@ -69,12 +154,11 @@ export function LandingAuthView({
         return;
       }
 
-      // Signed in via Login tab, but no business profile created yet
       setFullName(user.displayName || '');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Google sign-in failed.';
       if (!message.includes('popup-closed-by-user')) {
-        setError(message);
+        setError(formatAuthError(err));
       }
     } finally {
       setSubmitting(false);
@@ -240,7 +324,7 @@ export function LandingAuthView({
                     onClick={handleSwitchAccount}
                     className="w-full py-2 text-xs font-medium text-slate-500 hover:text-slate-900 cursor-pointer"
                   >
-                    Use a different Google account
+                    Use a different account
                   </button>
                 </form>
               </div>
@@ -254,7 +338,7 @@ export function LandingAuthView({
                     <p className="text-xs text-slate-500 mt-0.5">
                       {mode === 'signup'
                         ? 'Register your business to configure your UPI gateway'
-                        : 'Sign in with Google to check your gateway status'}
+                        : 'Sign in with email & password to check your gateway status'}
                     </p>
                   </div>
 
@@ -290,7 +374,7 @@ export function LandingAuthView({
                   </div>
                 </div>
 
-                <form onSubmit={handleGoogleAuth} className="mt-6 space-y-4">
+                <form onSubmit={handleEmailPasswordSubmit} className="mt-6 space-y-4">
                   {mode === 'signup' && (
                     <>
                       <div>
@@ -333,8 +417,46 @@ export function LandingAuthView({
                     </>
                   )}
 
+                  <div>
+                    <label
+                      htmlFor="email-address"
+                      className="block text-xs font-semibold text-slate-700 mb-1.5"
+                    >
+                      Email Address
+                    </label>
+                    <input
+                      id="email-address"
+                      type="email"
+                      required
+                      maxLength={254}
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="founder@pixelcraft.in"
+                      className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="password"
+                      className="block text-xs font-semibold text-slate-700 mb-1.5"
+                    >
+                      Password
+                    </label>
+                    <input
+                      id="password"
+                      type="password"
+                      required
+                      minLength={6}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={mode === 'signup' ? 'Minimum 6 characters' : 'Enter your password'}
+                      className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700"
+                    />
+                  </div>
+
                   {error && (
-                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700">
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700 leading-relaxed">
                       {error}
                     </div>
                   )}
@@ -342,25 +464,40 @@ export function LandingAuthView({
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-60 rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2.5"
+                    className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-60 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    {submitting
+                      ? mode === 'signup'
+                        ? 'Creating Account...'
+                        : 'Signing In...'
+                      : mode === 'signup'
+                      ? 'Continue to Gateway Setup'
+                      : 'Sign In to Workspace'}
+                  </button>
+                </form>
+
+                <div className="mt-4">
+                  <div className="relative flex py-2 items-center">
+                    <div className="flex-grow border-t border-slate-200" />
+                    <span className="shrink mx-3 text-[11px] font-medium text-slate-400">or</span>
+                    <div className="flex-grow border-t border-slate-200" />
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={handleGoogleAuth}
+                    className="w-full py-2.5 px-4 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-60 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-2"
                   >
                     <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
                       <path
-                        fill="#FFFFFF"
+                        fill="#4285F4"
                         d="M21.35 11.1h-9.17v2.98h5.27c-.23 1.49-1.69 4.38-5.27 4.38-3.17 0-5.76-2.62-5.76-5.86s2.59-5.86 5.76-5.86c1.81 0 3.02.77 3.71 1.44l2.53-2.44C16.8 4.24 14.69 3.3 12.18 3.3 7.21 3.3 3.2 7.31 3.2 12.28s4.01 8.98 8.98 8.98c5.18 0 8.62-3.64 8.62-8.77 0-.59-.07-1.04-.15-1.39z"
                       />
                     </svg>
-                    {submitting
-                      ? 'Connecting with Google...'
-                      : mode === 'signup'
-                      ? 'Continue with Google'
-                      : 'Sign in with Google'}
+                    Continue with Google
                   </button>
-
-                  <p className="text-[11px] text-slate-500 text-center leading-relaxed">
-                    Secured by Google Sign-In &amp; Cloud Firestore so your gateway registration and ₹499 activation sync across all devices.
-                  </p>
-                </form>
+                </div>
               </>
             )}
           </div>

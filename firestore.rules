@@ -29,7 +29,7 @@ service cloud.firestore {
     }
 
     function isOwner(userId) {
-      return isVerifiedUser() && request.auth.uid == userId;
+      return isSignedIn() && request.auth.uid == userId;
     }
 
     function isAdminToken() {
@@ -169,19 +169,19 @@ service cloud.firestore {
     // Merchant Client Accounts (PII-isolated to owner or verified platform admin)
     match /clients/{clientId} {
       allow get: if isValidId(clientId) && (isOwner(clientId) || isAdmin());
-      allow list: if isAdminToken() || (isVerifiedUser() && existing().uid == request.auth.uid);
+      allow list: if isAdminToken() || (isSignedIn() && existing().uid == request.auth.uid);
 
-      allow create: if isVerifiedUser()
+      allow create: if isSignedIn()
         && isValidId(clientId)
         && isValidClientAccount(incoming(), clientId)
         && isOwner(clientId)
         && incoming().uid == request.auth.uid
-        && incoming().email == request.auth.token.email
+        && incoming().email.lower() == request.auth.token.email.lower()
         && incoming().status == 'UNPAID'
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(clientId)
         && isValidClientAccount(incoming(), clientId)
         && incoming().id == existing().id
@@ -236,11 +236,11 @@ service cloud.firestore {
     // Customer Orders (Scoped to parent merchant owner or admin)
     match /orders/{orderDocId} {
       allow get: if isValidId(orderDocId) && (
-        (isVerifiedUser() && existing().clientId == request.auth.uid) || isAdmin()
+        (isSignedIn() && existing().clientId == request.auth.uid) || isAdmin()
       );
-      allow list: if isAdminToken() || (isVerifiedUser() && existing().clientId == request.auth.uid);
+      allow list: if isAdminToken() || (isSignedIn() && existing().clientId == request.auth.uid);
 
-      allow create: if isVerifiedUser()
+      allow create: if isSignedIn()
         && isValidId(orderDocId)
         && isValidCustomerOrder(incoming(), orderDocId)
         && incoming().status == 'PENDING_VERIFICATION'
@@ -248,7 +248,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/clients/$(incoming().clientId));
 
-      allow update: if isVerifiedUser()
+      allow update: if isSignedIn()
         && isValidId(orderDocId)
         && isValidCustomerOrder(incoming(), orderDocId)
         && incoming().id == existing().id
