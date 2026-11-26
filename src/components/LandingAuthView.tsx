@@ -280,12 +280,12 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
             </div>
 
             <div className="p-6 border border-slate-200 rounded-xl bg-slate-50/50">
-              <p className="font-mono text-xs font-semibold text-teal-700 mb-3">03. Collect</p>
+              <p className="font-mono text-xs font-semibold text-teal-700 mb-3">03. Receive &amp; Launch</p>
               <h3 className="font-display text-lg font-bold text-slate-900">
-                Share links & verify UTR orders
+                Get editable code or a readymade app
               </h3>
               <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                Share dynamic links like <code className="text-xs bg-slate-200/70 px-1.5 py-0.5 rounded">?amount=999&order_id=ORD123</code> and approve customer UTRs in your dashboard.
+                Provide your email to receive a personalized, editable UPI gateway code setup for your own app—or request a readymade setup with zero embeds required.
               </p>
             </div>
           </div>
@@ -338,10 +338,10 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
               <div className="p-5 bg-white border border-slate-200 rounded-xl">
                 <ShieldCheck className="w-5 h-5 text-teal-700 mb-3" />
                 <h3 className="font-display text-base font-bold text-slate-900">
-                  Embed & Redirect Ready
+                  Editable Code or Readymade Setup
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5">
-                  Copy an HTML iframe embed snippet for your storefront and redirect customers back to your thank-you page.
+                  Receive your standalone HTML/React gateway source code by email to customize inside your own app, or request a personalized readymade setup.
                 </p>
               </div>
             </div>
@@ -360,20 +360,20 @@ export function LandingAuthView({ onAuthenticated, onOpenAdmin }: LandingAuthVie
                 ₹499 once, zero recurring fees
               </h2>
               <p className="text-sm text-slate-600 leading-relaxed">
-                For creators, indie makers, and growing businesses who want direct UPI settlement without monthly gateway subscriptions.
+                For creators, indie makers, and growing businesses who want direct UPI settlement with full ownership of their checkout code.
               </p>
               <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-xs text-slate-700">
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-teal-700 shrink-0" />
-                  Unlimited UPI payment links
+                  Editable HTML &amp; React code setup
                 </li>
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-teal-700 shrink-0" />
-                  Dynamic amount & order ID params
+                  Readymade setup delivered by email
                 </li>
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-teal-700 shrink-0" />
-                  Custom brand accent & redirect
+                  Custom brand accent &amp; redirect
                 </li>
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-teal-700 shrink-0" />

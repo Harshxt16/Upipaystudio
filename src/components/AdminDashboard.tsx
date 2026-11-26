@@ -254,7 +254,7 @@ export function AdminDashboard({
               <thead>
                 <tr className="border-b border-slate-200 text-[11px] font-semibold text-slate-500 bg-slate-50/40">
                   <th className="py-3 px-5">Entity / Merchant</th>
-                  <th className="py-3 px-4">Owner &amp; Email</th>
+                  <th className="py-3 px-4">Delivery Email &amp; Setup</th>
                   <th className="py-3 px-4">Merchant UPI</th>
                   <th className="py-3 px-4">₹499 Activation UTR</th>
                   <th className="py-3 px-4">Status</th>
@@ -262,17 +262,35 @@ export function AdminDashboard({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-xs">
-                {filteredClients.map((client) => (
+                {filteredClients.map((client) => {
+                  const deliveryEmail = client.gatewayConfig?.deliveryEmail || client.email;
+                  const deliveryType =
+                    client.gatewayConfig?.deliveryPreference === 'readymade_setup'
+                      ? 'Personalized Readymade'
+                      : 'Editable Code Setup';
+                  return (
                   <tr key={client.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3.5 px-5">
                       <p className="font-semibold text-slate-900">{client.entityName}</p>
-                      <p className="font-mono text-[11px] text-slate-500 mt-0.5">
-                        ?gateway={client.slug} · {client.id}
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {client.fullName} · {client.id}
                       </p>
                     </td>
                     <td className="py-3.5 px-4">
-                      <p className="font-medium text-slate-900">{client.fullName}</p>
-                      <p className="text-slate-500 mt-0.5">{client.email}</p>
+                      <button
+                        type="button"
+                        onClick={() => copyText(`email-${client.id}`, deliveryEmail)}
+                        className="inline-flex items-center gap-1.5 font-medium text-slate-900 hover:text-teal-700 cursor-pointer"
+                        title="Copy delivery email"
+                      >
+                        {deliveryEmail}
+                        {copiedId === `email-${client.id}` ? (
+                          <Check className="w-3 h-3 text-emerald-600" />
+                        ) : (
+                          <Copy className="w-3 h-3 text-slate-400" />
+                        )}
+                      </button>
+                      <p className="text-[11px] text-slate-500 mt-0.5">{deliveryType}</p>
                     </td>
                     <td className="py-3.5 px-4 font-mono text-slate-800 whitespace-nowrap">
                       {client.gatewayConfig?.upiId || (
@@ -348,7 +366,8 @@ export function AdminDashboard({
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

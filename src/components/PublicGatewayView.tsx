@@ -1,11 +1,13 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
   ArrowLeft,
   Check,
   CheckCircle2,
   Copy,
   ExternalLink,
   Lock,
+  QrCode,
   ShieldCheck,
   Smartphone,
 } from 'lucide-react';
@@ -19,6 +21,14 @@ import {
 } from '../lib/storage';
 import { CustomerOrder } from '../types';
 import { QrCodeDisplay } from './QrCodeDisplay';
+
+type CheckoutStep =
+  | 'choose'
+  | 'qr'
+  | 'upi_waiting'
+  | 'upi_return'
+  | 'not_confirmed'
+  | 'confirmed';
 
 interface PublicGatewayViewProps {
   slug: string;
@@ -51,9 +61,27 @@ export function PublicGatewayView({
   const [customerName, setCustomerName] = useState('');
   const [customerNote, setCustomerNote] = useState('');
   const [utrInput, setUtrInput] = useState('');
+  const [appUtrInput, setAppUtrInput] = useState('');
+  const [step, setStep] = useState<CheckoutStep>('choose');
   const [error, setError] = useState('');
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [submittedOrder, setSubmittedOrder] = useState<CustomerOrder | null>(null);
+  const [confirmationMessage, setConfirmationMessage] = useState('');
+
+  useEffect(() => {
+    if (step !== 'upi_waiting') return;
+    const onReturn = () => {
+      if (document.visibilityState === 'visible') {
+        setStep('upi_return');
+      }
+    };
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('focus', onReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('focus', onReturn);
+    };
+  }, [step]);
 
   if (!client || client.status !== 'ACTIVE' || !client.gatewayConfig) {
     return (
@@ -104,7 +132,30 @@ export function PublicGatewayView({
     setTimeout(() => setCopiedUpi(false), 1800);
   };
 
-  const handleSubmitOrder = (e: FormEvent) => {
+  const handleSelectQr = () => {
+    setError('');
+    if (!isValidAmount) {
+      setError('Please enter a valid payment amount in INR first.');
+      return;
+    }
+    setStep('qr');
+  };
+
+  const handleSelectUpiApp = () => {
+    setError('');
+    if (!isValidAmount) {
+      setError('Please enter a valid payment amount in INR first.');
+      return;
+    }
+    setStep('upi_waiting');
+    try {
+      window.location.href = upiUri;
+    } catch {
+      // Ignore scheme block in desktop browser
+    }
+  };
+
+  const handleSubmitQrOrder = (e: FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -129,13 +180,35 @@ export function PublicGatewayView({
       customerNote,
     });
     setSubmittedOrder(created);
+    setConfirmationMessage(
+      'Your 12-digit UTR has been logged. Verification may take up to 24 hours.'
+    );
+    setStep('confirmed');
+  };
+
+  const handleConfirmUpiAppReturn = (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const cleaned = appUtrInput.replace(/\s+/g, '');
+    const created = createCustomerOrder({
+      clientId: client.id,
+      clientSlug: client.slug,
+      orderId: effectiveOrderId,
+      amount: numericAmount,
+      utr: isValidUtr(cleaned) ? cleaned : 'UPI-APP-PAID',
+      customerName,
+      customerNote,
+    });
+    setSubmittedOrder(created);
+    setConfirmationMessage('Payment confirmed via UPI App.');
+    setStep('confirmed');
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-between">
       <div>
         {!embed && (
-          <div className="max-w-4xl mx-auto px-4 pt-6 flex items-center justify-between text-xs text-slate-500">
+          <div className="max-w-2xl mx-auto px-4 pt-6 flex items-center justify-between text-xs text-slate-500">
             <button
               type="button"
               onClick={onExitGateway}
@@ -151,11 +224,16 @@ export function PublicGatewayView({
           </div>
         )}
 
-        <main className="max-w-4xl mx-auto px-4 py-8 sm:py-12">
+        <main className="max-w-2xl mx-auto px-4 py-8 sm:py-12">
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="h-1.5 w-full" style={{ backgroundColor: accentColor }} />
+            <div
+              className="h-1.5 w-full"
+              style={{
+                backgroundColor: step === 'not_confirmed' ? '#DC2626' : accentColor,
+              }}
+            />
 
-            {submittedOrder ? (
+            {step === 'confirmed' && submittedOrder ? (
               <div className="p-8 sm:p-10 max-w-lg mx-auto text-center space-y-6">
                 <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto">
                   <CheckCircle2 className="w-6 h-6" />
@@ -163,11 +241,9 @@ export function PublicGatewayView({
 
                 <div className="space-y-2">
                   <h1 className="font-display text-2xl font-bold text-slate-900">
-                    Payment Reference Submitted
+                    Order Reference Recorded
                   </h1>
-                  <p className="text-sm text-slate-600">
-                    Your 12-digit UTR has been logged with <span className="font-semibold text-slate-900">{client.entityName}</span> for verification.
-                  </p>
+                  <p className="text-sm text-slate-600">{confirmationMessage}</p>
                 </div>
 
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 text-left space-y-2.5 text-xs">
@@ -184,7 +260,7 @@ export function PublicGatewayView({
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Submitted UTR</span>
+                    <span className="text-slate-500">Reference / UTR</span>
                     <span className="font-mono font-semibold text-slate-900 tabular-nums">
                       {submittedOrder.utr}
                     </span>
@@ -198,7 +274,7 @@ export function PublicGatewayView({
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-                  {gatewayConfig.redirectUrl && (
+                  {gatewayConfig.redirectUrl ? (
                     <a
                       href={gatewayConfig.redirectUrl}
                       target="_top"
@@ -209,12 +285,23 @@ export function PublicGatewayView({
                       Continue to {client.entityName}
                       <ExternalLink className="w-4 h-4" />
                     </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={onExitGateway}
+                      className="w-full sm:w-auto px-5 py-2.5 text-sm font-semibold text-white rounded-lg cursor-pointer"
+                      style={{ backgroundColor: accentColor }}
+                    >
+                      Back to Page
+                    </button>
                   )}
                   <button
                     type="button"
                     onClick={() => {
                       setSubmittedOrder(null);
                       setUtrInput('');
+                      setAppUtrInput('');
+                      setStep('choose');
                     }}
                     className="w-full sm:w-auto px-4 py-2.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer"
                   >
@@ -223,82 +310,30 @@ export function PublicGatewayView({
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-12">
-                <div className="md:col-span-5 p-6 sm:p-8 bg-slate-50/70 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col justify-between space-y-6">
-                  <div className="space-y-1">
+              <div className="p-6 sm:p-8 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-5 border-b border-slate-200">
+                  <div>
                     <p className="text-xs font-medium text-slate-500">Paying Merchant</p>
                     <h1 className="font-display text-xl font-bold text-slate-900">
-                      {client.entityName}
+                      {step === 'not_confirmed' ? 'Order Not Confirmed' : client.entityName}
                     </h1>
-                    <p className="text-xs text-slate-600">
-                      Payee: {gatewayConfig.payeeName}
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Payee: {gatewayConfig.payeeName} · UPI: <span className="font-mono text-slate-700">{gatewayConfig.upiId}</span>
                     </p>
                   </div>
 
-                  <div className="flex flex-col items-center">
-                    <QrCodeDisplay
-                      value={upiUri}
-                      staticImageUrl={gatewayConfig.staticQrDataUrl}
-                      size={200}
-                      accentColor={accentColor}
-                      label={
-                        isValidAmount
-                          ? `Scan with any UPI App · ${formatInr(numericAmount)}`
-                          : 'Enter an amount to embed into QR'
-                      }
-                    />
-                  </div>
-
-                  <div className="space-y-3">
-                    {isValidAmount ? (
-                      <a
-                        href={upiUri}
-                        className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold text-white rounded-lg transition-opacity hover:opacity-90 whitespace-nowrap"
-                        style={{ backgroundColor: accentColor }}
-                      >
-                        <Smartphone className="w-4 h-4" />
-                        Pay {formatInr(numericAmount)} via UPI App
-                      </a>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled
-                        className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold text-slate-400 bg-slate-200 rounded-lg cursor-not-allowed whitespace-nowrap"
-                      >
-                        <Smartphone className="w-4 h-4" />
-                        Enter Amount to Pay via App
-                      </button>
-                    )}
-
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200 text-xs">
-                      <span className="text-slate-500">UPI ID</span>
-                      <button
-                        type="button"
-                        onClick={handleCopyUpi}
-                        className="inline-flex items-center gap-1.5 font-mono font-medium text-slate-800 hover:text-slate-900 cursor-pointer"
-                      >
-                        {gatewayConfig.upiId}
-                        {copiedUpi ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5 text-slate-400" />
-                        )}
-                      </button>
+                  {isValidAmount && (
+                    <div className="sm:text-right">
+                      <p className="text-xs text-slate-500">Payable Amount</p>
+                      <p className="font-mono text-2xl font-bold text-slate-900 tabular-nums">
+                        {formatInr(numericAmount)}
+                      </p>
                     </div>
-                  </div>
+                  )}
                 </div>
 
-                <div className="md:col-span-7 p-6 sm:p-8 space-y-6">
-                  <div>
-                    <h2 className="font-display text-lg font-bold text-slate-900">
-                      Order &amp; Payment Confirmation
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Scan the QR code or tap Pay via UPI App, then submit your 12-digit UTR below.
-                    </p>
-                  </div>
-
-                  <form onSubmit={handleSubmitOrder} className="space-y-4">
+                {step === 'choose' && (
+                  <div className="space-y-5">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <label
@@ -394,43 +429,244 @@ export function PublicGatewayView({
                       </div>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-200">
-                      <label
-                        htmlFor="customer-utr"
-                        className="block text-xs font-semibold text-slate-700 mb-1.5"
-                      >
-                        12-Digit UPI UTR / Reference Number
-                      </label>
-                      <input
-                        id="customer-utr"
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={12}
-                        required
-                        value={utrInput}
-                        onChange={(e) =>
-                          setUtrInput(e.target.value.replace(/\D/g, '').slice(0, 12))
-                        }
-                        placeholder="Enter 12-digit UTR after paying (e.g. 412345678901)"
-                        className="w-full px-3.5 py-2.5 text-base font-mono tracking-wider bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/15 focus:border-slate-900 tabular-nums"
-                      />
-                    </div>
-
                     {error && (
                       <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700">
                         {error}
                       </div>
                     )}
 
+                    <div className="pt-2 border-t border-slate-200 space-y-3">
+                      <p className="text-xs font-semibold text-slate-700">
+                        Select Payment Method:
+                      </p>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={handleSelectQr}
+                          className="text-left p-4 bg-white border border-slate-200 hover:border-slate-900 rounded-xl transition-colors cursor-pointer flex items-start gap-3"
+                        >
+                          <QrCode className="w-5 h-5 text-slate-800 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-sm font-bold text-slate-900">Pay through QR</p>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              Scan QR &amp; enter 12-digit UTR (up to 24 hrs verification)
+                            </p>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleSelectUpiApp}
+                          className="text-left p-4 bg-white border border-slate-200 hover:border-slate-900 rounded-xl transition-colors cursor-pointer flex items-start gap-3"
+                        >
+                          <Smartphone className="w-5 h-5 text-slate-800 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-sm font-bold text-slate-900">Pay through UPI App</p>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              Open GPay, PhonePe, Paytm, or FamPay on your phone
+                            </p>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {step === 'qr' && (
+                  <div className="space-y-5">
                     <button
-                      type="submit"
-                      className="w-full py-3 px-5 text-sm font-semibold text-white rounded-lg transition-opacity hover:opacity-90 cursor-pointer whitespace-nowrap"
+                      type="button"
+                      onClick={() => {
+                        setError('');
+                        setStep('choose');
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      Change Payment Method
+                    </button>
+
+                    <div className="flex flex-col items-center p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                      <QrCodeDisplay
+                        value={upiUri}
+                        staticImageUrl={gatewayConfig.staticQrDataUrl}
+                        size={200}
+                        accentColor={accentColor}
+                        label={`Scan with any UPI App · ${formatInr(numericAmount)}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCopyUpi}
+                        className="inline-flex items-center gap-1.5 text-xs font-mono font-medium text-slate-700 hover:text-slate-900 cursor-pointer"
+                      >
+                        {gatewayConfig.upiId}
+                        {copiedUpi ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5 text-slate-400" />
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 leading-relaxed">
+                      <strong>Note:</strong> After scanning and completing payment, submit your 12-digit UTR number below. Verification may take up to <strong>24 hours</strong>.
+                    </div>
+
+                    <form onSubmit={handleSubmitQrOrder} className="space-y-4">
+                      <div>
+                        <label
+                          htmlFor="customer-utr"
+                          className="block text-xs font-semibold text-slate-700 mb-1.5"
+                        >
+                          12-Digit UPI UTR / Reference Number
+                        </label>
+                        <input
+                          id="customer-utr"
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={12}
+                          required
+                          value={utrInput}
+                          onChange={(e) =>
+                            setUtrInput(e.target.value.replace(/\D/g, '').slice(0, 12))
+                          }
+                          placeholder="Enter 12-digit UTR (e.g. 412345678901)"
+                          className="w-full px-3.5 py-2.5 text-base font-mono tracking-wider bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/15 focus:border-slate-900 tabular-nums"
+                        />
+                      </div>
+
+                      {error && (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700">
+                          {error}
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        className="w-full py-3 px-5 text-sm font-semibold text-white rounded-lg transition-opacity hover:opacity-90 cursor-pointer whitespace-nowrap"
+                        style={{ backgroundColor: accentColor }}
+                      >
+                        Submit 12-Digit UTR &amp; Place Order
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+                {step === 'upi_waiting' && (
+                  <div className="space-y-4">
+                    <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                      <p className="text-sm font-bold text-slate-900">Opening your UPI app...</p>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Complete the {formatInr(numericAmount)} payment in your UPI app and return to this page. If your UPI app did not open automatically, tap below.
+                      </p>
+                    </div>
+
+                    <a
+                      href={upiUri}
+                      className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold text-white rounded-lg"
                       style={{ backgroundColor: accentColor }}
                     >
-                      Submit 12-Digit UTR &amp; Complete Order
+                      <Smartphone className="w-4 h-4" />
+                      Open UPI App Again
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={() => setStep('upi_return')}
+                      className="w-full py-2.5 px-4 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer"
+                    >
+                      I Returned From UPI App
                     </button>
-                  </form>
-                </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setStep('not_confirmed')}
+                      className="w-full py-2.5 px-4 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg cursor-pointer"
+                    >
+                      Cancel / Payment Not Done
+                    </button>
+                  </div>
+                )}
+
+                {step === 'upi_return' && (
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <h2 className="font-display text-base font-bold text-slate-900">
+                        Did you complete the payment in your UPI app?
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Confirm whether your {formatInr(numericAmount)} payment succeeded to proceed.
+                      </p>
+                    </div>
+
+                    <form onSubmit={handleConfirmUpiAppReturn} className="space-y-3">
+                      <div>
+                        <label
+                          htmlFor="app-utr"
+                          className="block text-xs font-semibold text-slate-700 mb-1.5"
+                        >
+                          12-Digit UTR (Optional if paid via UPI app)
+                        </label>
+                        <input
+                          id="app-utr"
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={12}
+                          value={appUtrInput}
+                          onChange={(e) =>
+                            setAppUtrInput(e.target.value.replace(/\D/g, '').slice(0, 12))
+                          }
+                          placeholder="Optional 12-digit UTR"
+                          className="w-full px-3.5 py-2.5 text-sm font-mono bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-900 tabular-nums"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        className="w-full py-3 px-4 text-sm font-semibold text-white rounded-lg cursor-pointer"
+                        style={{ backgroundColor: accentColor }}
+                      >
+                        Yes, Payment Completed
+                      </button>
+                    </form>
+
+                    <button
+                      type="button"
+                      onClick={() => setStep('not_confirmed')}
+                      className="w-full py-2.5 px-4 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg cursor-pointer"
+                    >
+                      No, Payment Not Done
+                    </button>
+                  </div>
+                )}
+
+                {step === 'not_confirmed' && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-xs text-red-800">
+                      <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                      <p className="leading-relaxed">
+                        Payment was not completed in your UPI app, so this order is <strong>not confirmed</strong>. No order has been placed.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSelectUpiApp}
+                      className="w-full py-3 px-4 text-sm font-semibold text-white rounded-lg cursor-pointer"
+                      style={{ backgroundColor: accentColor }}
+                    >
+                      Retry via UPI App
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setStep('qr')}
+                      className="w-full py-2.5 px-4 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg cursor-pointer"
+                    >
+                      Pay through QR Code Instead
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

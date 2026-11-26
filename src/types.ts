@@ -9,6 +9,9 @@ export type OrderStatus = 'PENDING_VERIFICATION' | 'APPROVED' | 'REJECTED';
 export interface GatewayConfig {
   upiId: string;
   payeeName: string;
+  adminPin?: string;
+  deliveryEmail?: string;
+  deliveryPreference?: string;
   staticQrDataUrl?: string;
   accentColor: string;
   redirectUrl?: string;
