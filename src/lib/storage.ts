@@ -30,9 +30,63 @@ export function subscribeToStorageSync(callback: () => void): () => void {
   };
 }
 
+const memoryStorage = new Map<string, string>();
+
+function safeGetLocal(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return memoryStorage.get(key) ?? null;
+  }
+}
+
+function safeSetLocal(key: string, value: string): void {
+  memoryStorage.set(key, value);
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage quota/security errors in restricted iframes
+  }
+}
+
+function safeRemoveLocal(key: string): void {
+  memoryStorage.delete(key);
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function safeGetSession(key: string): string | null {
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch {
+    return memoryStorage.get(`session:${key}`) ?? null;
+  }
+}
+
+function safeSetSession(key: string, value: string): void {
+  memoryStorage.set(`session:${key}`, value);
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function safeRemoveSession(key: string): void {
+  memoryStorage.delete(`session:${key}`);
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export function getClients(): ClientAccount[] {
   try {
-    const raw = localStorage.getItem(CLIENTS_KEY);
+    const raw = safeGetLocal(CLIENTS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -42,13 +96,13 @@ export function getClients(): ClientAccount[] {
 }
 
 export function saveClients(clients: ClientAccount[]): void {
-  localStorage.setItem(CLIENTS_KEY, JSON.stringify(clients));
+  safeSetLocal(CLIENTS_KEY, JSON.stringify(clients));
   emitSync();
 }
 
 export function getOrders(): CustomerOrder[] {
   try {
-    const raw = localStorage.getItem(ORDERS_KEY);
+    const raw = safeGetLocal(ORDERS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -58,19 +112,19 @@ export function getOrders(): CustomerOrder[] {
 }
 
 export function saveOrders(orders: CustomerOrder[]): void {
-  localStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
+  safeSetLocal(ORDERS_KEY, JSON.stringify(orders));
   emitSync();
 }
 
 export function getCurrentClientId(): string | null {
-  return localStorage.getItem(SESSION_CLIENT_KEY);
+  return safeGetLocal(SESSION_CLIENT_KEY);
 }
 
 export function setCurrentClientId(clientId: string | null): void {
   if (clientId) {
-    localStorage.setItem(SESSION_CLIENT_KEY, clientId);
+    safeSetLocal(SESSION_CLIENT_KEY, clientId);
   } else {
-    localStorage.removeItem(SESSION_CLIENT_KEY);
+    safeRemoveLocal(SESSION_CLIENT_KEY);
   }
   emitSync();
 }
@@ -82,14 +136,14 @@ export function getCurrentClient(): ClientAccount | null {
 }
 
 export function isAdminAuthenticated(): boolean {
-  return sessionStorage.getItem(ADMIN_AUTH_KEY) === 'true';
+  return safeGetSession(ADMIN_AUTH_KEY) === 'true';
 }
 
 export function setAdminAuthenticated(authed: boolean): void {
   if (authed) {
-    sessionStorage.setItem(ADMIN_AUTH_KEY, 'true');
+    safeSetSession(ADMIN_AUTH_KEY, 'true');
   } else {
-    sessionStorage.removeItem(ADMIN_AUTH_KEY);
+    safeRemoveSession(ADMIN_AUTH_KEY);
   }
 }
 

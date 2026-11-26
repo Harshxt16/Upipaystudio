@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Component, ReactNode, useCallback, useEffect, useState } from 'react';
 import { AdminDashboard } from './components/AdminDashboard';
 import { ClientDashboard } from './components/ClientDashboard';
 import { LandingAuthView } from './components/LandingAuthView';
@@ -75,11 +75,16 @@ export default function App() {
   }, [refreshData]);
 
   const navigateUrl = (searchParams: Record<string, string | undefined>, nextRoute: AppView) => {
-    const url = new URL(window.location.origin + window.location.pathname);
-    Object.entries(searchParams).forEach(([key, val]) => {
-      if (val) url.searchParams.set(key, val);
-    });
-    window.history.pushState({}, '', url.toString());
+    try {
+      const url = new URL(window.location.href);
+      url.search = '';
+      Object.entries(searchParams).forEach(([key, val]) => {
+        if (val) url.searchParams.set(key, val);
+      });
+      window.history.pushState({}, '', url.toString());
+    } catch {
+      // Fallback to in-memory route state if history API is restricted
+    }
     setRoute(nextRoute);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -197,3 +202,51 @@ export default function App() {
     </div>
   );
 }
+
+class AppErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+            <h1 className="font-display text-lg font-bold text-slate-900">
+              Something went wrong
+            </h1>
+            <p className="text-sm text-slate-600">
+              {this.state.error.message || 'An unexpected error occurred while rendering this page.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                this.setState({ error: null });
+                window.location.href = window.location.pathname;
+              }}
+              className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+            >
+              Reload UPIPay Studio
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function RootApp() {
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  );
+}
+

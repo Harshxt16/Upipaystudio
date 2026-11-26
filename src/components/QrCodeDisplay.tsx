@@ -32,7 +32,18 @@ export function QrCodeDisplay({
     }
 
     let cancelled = false;
-    QRCode.toDataURL(value, {
+    const qrModule = QRCode as unknown as {
+      toDataURL?: typeof QRCode.toDataURL;
+      default?: { toDataURL?: typeof QRCode.toDataURL };
+    };
+    const toDataUrlFn = qrModule.toDataURL ?? qrModule.default?.toDataURL;
+
+    if (!toDataUrlFn) {
+      setError('QR generator unavailable.');
+      return;
+    }
+
+    toDataUrlFn(value, {
       width: size * 2,
       margin: 2,
       errorCorrectionLevel: 'M',
