@@ -2,7 +2,7 @@
   "entities": {
     "ClientAccount": {
       "title": "ClientAccount",
-      "description": "Merchant account, onboarding status, ₹1 activation UTR, and personalized UPI gateway configuration.",
+      "description": "Merchant account, onboarding status, activation UTR, and personalized UPI gateway configuration.",
       "type": "object",
       "properties": {
         "id": {
@@ -101,7 +101,7 @@
         },
         "activationUtr": {
           "type": "string",
-          "description": "Alphanumeric varchar UPI UTR / transaction reference for the ₹1 lifetime payment.",
+          "description": "Alphanumeric varchar UPI UTR / transaction reference for gateway payment.",
           "minLength": 8,
           "maxLength": 32,
           "pattern": "^[A-Za-z0-9_\\-]+$"
@@ -213,7 +213,7 @@
     },
     "UsedUtr": {
       "title": "UsedUtr",
-      "description": "Immutable anti-fraud registry of consumed 12-digit UTRs for ₹1 lifetime activations.",
+      "description": "Immutable anti-fraud registry of consumed alphanumeric UTRs for verified payments.",
       "type": "object",
       "properties": {
         "utr": {
@@ -245,7 +245,7 @@
     },
     "FamPayAlert": {
       "title": "FamPayAlert",
-      "description": "Parsed FamPay payment credit alert used for exact ₹1 automated UTR verification.",
+      "description": "Parsed FamPay payment credit alert used for automated alphanumeric UTR verification.",
       "type": "object",
       "properties": {
         "utr": {
@@ -348,12 +348,67 @@
         }
       },
       "required": ["uid", "email", "createdAt"]
+    },
+    "PublicGateway": {
+      "title": "PublicGateway",
+      "description": "Non-PII public UPI checkout metadata for a merchant gateway slug.",
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[a-z0-9\\-]+$"
+        },
+        "clientId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "entityName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "payeeName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "upiId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 256
+        },
+        "accentColor": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20
+        },
+        "redirectUrl": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "staticQrDataUrl": {
+          "type": "string",
+          "maxLength": 500000
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["slug", "clientId", "entityName", "payeeName", "upiId", "accentColor", "active", "updatedAt"]
     }
   },
   "firestore": {
     "/clients/{clientId}": {
       "schema": { "$ref": "#/entities/ClientAccount" },
-      "description": "Stores merchant profiles, UPI gateway configs, and ₹1 activation UTR verification status. Scoped to owner UID or platform owner admin."
+      "description": "Stores merchant profiles, UPI gateway configs, and activation UTR verification status. Scoped to owner UID or platform owner admin."
     },
     "/orders/{orderId}": {
       "schema": { "$ref": "#/entities/CustomerOrder" },
@@ -361,11 +416,11 @@
     },
     "/used_utrs/{utrId}": {
       "schema": { "$ref": "#/entities/UsedUtr" },
-      "description": "Immutable registry of 12-digit UTRs already used for ₹1 lifetime account activations."
+      "description": "Immutable registry of alphanumeric UTRs already used for verified account payments."
     },
     "/fampay_alerts/{alertId}": {
       "schema": { "$ref": "#/entities/FamPayAlert" },
-      "description": "Parsed FamPay credit alerts keyed by 12-digit UTR for instant ₹1 auto-verification."
+      "description": "Parsed FamPay credit alerts keyed by alphanumeric UTR for instant automated verification."
     },
     "/settings/{settingId}": {
       "schema": { "$ref": "#/entities/FamPaySyncConfig" },
@@ -374,6 +429,10 @@
     "/admins/{adminId}": {
       "schema": { "$ref": "#/entities/AdminUser" },
       "description": "Platform owner admin allowlist."
+    },
+    "/public_gateways/{slug}": {
+      "schema": { "$ref": "#/entities/PublicGateway" },
+      "description": "Public non-PII UPI gateway details keyed by slug so external payers can complete checkout."
     }
   }
 }

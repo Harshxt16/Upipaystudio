@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Copy,
   ExternalLink,
-  Lock,
   QrCode,
   ShieldCheck,
   Smartphone,
@@ -17,9 +16,10 @@ import {
   formatDateTime,
   formatInr,
   getClientBySlug,
+  getPublicGatewayBySlug,
   isValidUtr,
 } from '../lib/storage';
-import { CustomerOrder } from '../types';
+import { ClientAccount, CustomerOrder } from '../types';
 import { QrCodeDisplay } from './QrCodeDisplay';
 
 type CheckoutStep =
@@ -45,7 +45,26 @@ export function PublicGatewayView({
   embed = false,
   onExitGateway,
 }: PublicGatewayViewProps) {
-  const client = getClientBySlug(slug);
+  const [client, setClient] = useState<ClientAccount | null>(() => getClientBySlug(slug));
+  const [loadingGateway, setLoadingGateway] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setLoadingGateway(true);
+    getPublicGatewayBySlug(slug)
+      .then((found) => {
+        if (active) {
+          setClient(found);
+          setLoadingGateway(false);
+        }
+      })
+      .catch(() => {
+        if (active) setLoadingGateway(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [slug]);
 
   const generatedFallbackOrderId = useMemo(
     () => `ORD-${Math.floor(100000 + Math.random() * 900000)}`,
@@ -83,19 +102,27 @@ export function PublicGatewayView({
     };
   }, [step]);
 
-  if (!client || client.status !== 'ACTIVE' || !client.gatewayConfig) {
+  if (loadingGateway) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4 py-16">
+        <p className="text-sm font-medium text-slate-500">Loading UPI Payment Gateway...</p>
+      </div>
+    );
+  }
+
+  if (!client || !client.gatewayConfig) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4 py-16">
         <div className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-8 text-center space-y-4">
           <div className="w-11 h-11 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center mx-auto">
-            <Lock className="w-5 h-5" />
+            <QrCode className="w-5 h-5" />
           </div>
           <h1 className="font-display text-xl font-bold text-slate-900">
-            {client ? 'Gateway Pending Activation' : 'Payment Gateway Not Found'}
+            {client ? 'Gateway Setup Incomplete' : 'Payment Gateway Not Found'}
           </h1>
           <p className="text-sm text-slate-600 leading-relaxed">
             {client
-              ? `The payment gateway for ${client.entityName} is not active yet. Please contact the merchant or check back once verification completes.`
+              ? `The merchant UPI details for ${client.entityName} have not been configured yet.`
               : `No active UPI payment gateway was found for "${slug}".`}
           </p>
           {!embed && (

@@ -170,7 +170,7 @@ export function parseFamPayEmailText(input: {
   }
 
   const utrValidation = utr ? validateStrictActivationUtr(utr) : null;
-  const exactAmountMatch = amount === expectedAmount;
+  const exactAmountMatch = amount !== null && amount >= expectedAmount;
   const canAutoApprove = Boolean(utr && utrValidation?.valid && exactAmountMatch);
 
   let diagnosticMessage = '';
@@ -181,9 +181,9 @@ export function parseFamPayEmailText(input: {
   } else if (amount === null) {
     diagnosticMessage = 'UTR detected, but no INR/₹ payment amount was found.';
   } else if (!exactAmountMatch) {
-    diagnosticMessage = `Amount lock rejected auto-approval: extracted ₹${amount}, but exact ₹${expectedAmount} is required.`;
+    diagnosticMessage = `Extracted ₹${amount} is below the minimum ₹${expectedAmount} payment threshold.`;
   } else {
-    diagnosticMessage = `Verified match criteria: valid varchar UTR (${utr}) and exact ₹${expectedAmount} credit amount.`;
+    diagnosticMessage = `Verified match criteria: valid varchar UTR (${utr}) and ₹${amount} credit amount.`;
   }
 
   return {

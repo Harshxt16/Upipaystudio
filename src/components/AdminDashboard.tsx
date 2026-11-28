@@ -495,7 +495,7 @@ export function AdminDashboard({ authUser }: AdminDashboardProps) {
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <p className="text-xs text-slate-500">Locked Anti-Fraud UTRs</p>
+          <p className="text-xs text-slate-500">Verified Anti-Fraud UTRs</p>
           <p className="font-mono text-2xl font-bold text-teal-700 mt-1 tabular-nums">
             {usedUtrs.length}
           </p>
@@ -734,7 +734,7 @@ export function AdminDashboard({ authUser }: AdminDashboardProps) {
               </div>
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-md w-fit">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                Exact ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Amount Lock Enabled
+                Flexible ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr}+ Payment Verification Active
               </span>
             </div>
 
@@ -908,7 +908,7 @@ export function AdminDashboard({ authUser }: AdminDashboardProps) {
                     <strong>Every minute</strong>.
                   </li>
                   <li>
-                    Click <strong>Run</strong> once to authorize Gmail &amp; URL Fetch scopes. Each matching email is automatically marked as read so it is never synced twice.
+                    Click <strong>Run</strong> once to authorize Gmail &amp; URL Fetch scopes. <strong>No Web App deployment or Apps Script Web URL is needed</strong> — only the 1-minute Time-driven Trigger above. Each matching email is marked as read so it is never synced twice.
                   </li>
                 </ol>
               </div>
@@ -1012,8 +1012,8 @@ export function AdminDashboard({ authUser }: AdminDashboardProps) {
                       }`}
                     >
                       {parsedSimulation.canAutoApprove
-                        ? `Eligible for ₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Auto-Activation`
-                        : `Blocked by Anti-Fraud / ₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Lock`}
+                        ? `Eligible for Auto-Activation (₹${parsedSimulation.amount})`
+                        : 'Invalid UTR or Amount'}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-600">
@@ -1064,7 +1064,7 @@ export function AdminDashboard({ authUser }: AdminDashboardProps) {
                 </h3>
               </div>
               <span className="text-xs text-slate-500 font-mono">
-                {fampayAlerts.length} alerts · {usedUtrs.length} locked UTRs
+                {fampayAlerts.length} alerts · {usedUtrs.length} verified UTRs
               </span>
             </div>
 
@@ -1107,13 +1107,13 @@ export function AdminDashboard({ authUser }: AdminDashboardProps) {
                               <CheckCircle2 className="w-3.5 h-3.5" />
                               Matched &amp; Activated
                             </span>
-                          ) : alert.amount === PLATFORM_OWNER_CONFIG.lifetimeFeeInr ? (
+                          ) : alert.amount >= PLATFORM_OWNER_CONFIG.lifetimeFeeInr ? (
                             <span className="font-semibold text-amber-700">
-                              Unmatched ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} (Ready)
+                              Ready for Match (₹{alert.amount})
                             </span>
                           ) : (
                             <span className="font-semibold text-red-700">
-                              Locked (Amount ≠ ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr})
+                              Below Minimum (₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr})
                             </span>
                           )}
                         </td>

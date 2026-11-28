@@ -16,12 +16,14 @@ import { ClientStatusLabel } from './StatusIndicator';
 interface ConciergeGatewayCardProps {
   client: ClientAccount;
   onGoToSetup: () => void;
+  onMakeFurtherPayment?: () => void;
   onRefresh: () => void;
 }
 
 export function ConciergeGatewayCard({
   client,
   onGoToSetup,
+  onMakeFurtherPayment,
   onRefresh,
 }: ConciergeGatewayCardProps) {
   const isVerified = client.status === 'ACTIVE';
@@ -410,18 +412,30 @@ export function ConciergeGatewayCard({
                 </button>
               </p>
 
-              {!isVerified && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowUtrEditor((s) => !s);
-                    setUtrUpdated(false);
-                  }}
-                  className="text-xs font-semibold text-slate-600 hover:text-slate-900 underline underline-offset-4 cursor-pointer self-start sm:self-auto"
-                >
-                  {showUtrEditor ? 'Hide UTR Editor' : 'Update UTR / Ref ID'}
-                </button>
-              )}
+              <div className="flex flex-wrap items-center gap-3 self-start sm:self-auto">
+                {onMakeFurtherPayment && (
+                  <button
+                    type="button"
+                    onClick={onMakeFurtherPayment}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer whitespace-nowrap"
+                  >
+                    Make Further Payment
+                  </button>
+                )}
+
+                {!isVerified && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowUtrEditor((s) => !s);
+                      setUtrUpdated(false);
+                    }}
+                    className="text-xs font-semibold text-slate-600 hover:text-slate-900 underline underline-offset-4 cursor-pointer"
+                  >
+                    {showUtrEditor ? 'Hide UTR Editor' : 'Update UTR / Ref ID'}
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>

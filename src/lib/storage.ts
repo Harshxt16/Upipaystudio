@@ -324,6 +324,41 @@ function sanitizeGatewayConfig(config: GatewayConfig): Record<string, string> {
   return clean;
 }
 
+async function syncPublicGatewayDoc(params: {
+  slug: string;
+  clientId: string;
+  entityName: string;
+  config: GatewayConfig | null | undefined;
+  active: boolean;
+}): Promise<void> {
+  if (!params.config || !params.slug) return;
+  const cleanSlug = params.slug.trim().toLowerCase().slice(0, 100);
+  if (!/^[a-z0-9-]+$/.test(cleanSlug)) return;
+
+  const payload: Record<string, unknown> = {
+    slug: cleanSlug,
+    clientId: params.clientId,
+    entityName: params.entityName.trim().slice(0, 120),
+    payeeName: (params.config.payeeName || params.entityName).trim().slice(0, 120),
+    upiId: params.config.upiId.trim().slice(0, 256),
+    accentColor: (params.config.accentColor || '#0F766E').trim().slice(0, 20),
+    active: params.active,
+    updatedAt: serverTimestamp(),
+  };
+  if (params.config.redirectUrl?.trim()) {
+    payload.redirectUrl = params.config.redirectUrl.trim().slice(0, 500);
+  }
+  if (params.config.staticQrDataUrl?.trim()) {
+    payload.staticQrDataUrl = params.config.staticQrDataUrl.trim().slice(0, 500000);
+  }
+
+  try {
+    await setDoc(doc(db, 'public_gateways', cleanSlug), payload);
+  } catch {
+    // Best-effort sync for public checkout route
+  }
+}
+
 export async function updateClientGatewayConfig(
   clientId: string,
   config: GatewayConfig
@@ -335,6 +370,16 @@ export async function updateClientGatewayConfig(
       gatewayConfig: cleanConfig,
       updatedAt: serverTimestamp(),
     });
+    const updatedClient = await getClientAccountOnce(clientId);
+    if (updatedClient) {
+      await syncPublicGatewayDoc({
+        slug: updatedClient.slug,
+        clientId: updatedClient.id,
+        entityName: updatedClient.entityName,
+        config,
+        active: updatedClient.status === 'ACTIVE',
+      });
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, docPath);
   }
@@ -377,9 +422,10 @@ export async function submitActivationUtr(
   }
 
   const alertData = alertSnap?.exists() ? (alertSnap.data() as Record<string, unknown>) : null;
+  const alertAmount = typeof alertData?.amount === 'number' ? alertData.amount : 0;
   const canInstantAutoConfirm =
     Boolean(alertData) &&
-    alertData?.amount === expectedFee &&
+    alertAmount >= expectedFee &&
     alertData?.matched === false;
 
   if (canInstantAutoConfirm) {
@@ -395,7 +441,7 @@ export async function submitActivationUtr(
     batch.set(usedRef, {
       utr: cleanedUtr,
       clientId,
-      amount: expectedFee,
+      amount: alertAmount,
       activatedAt: nowIso,
       createdAt: serverTimestamp(),
     });
@@ -407,6 +453,16 @@ export async function submitActivationUtr(
 
     try {
       await batch.commit();
+      const activatedClient = await getClientAccountOnce(clientId);
+      if (activatedClient?.gatewayConfig) {
+        await syncPublicGatewayDoc({
+          slug: activatedClient.slug,
+          clientId: activatedClient.id,
+          entityName: activatedClient.entityName,
+          config: activatedClient.gatewayConfig,
+          active: true,
+        });
+      }
       return {
         status: 'ACTIVE',
         autoConfirmed: true,
@@ -477,6 +533,11 @@ export async function adminApproveClient(clientId: string): Promise<void> {
       alertSnap = null;
     }
 
+    const alertAmount =
+      alertSnap?.exists() && typeof (alertSnap.data() as Record<string, unknown>).amount === 'number'
+        ? Number((alertSnap.data() as Record<string, unknown>).amount)
+        : PLATFORM_OWNER_CONFIG.lifetimeFeeInr;
+
     const batch = writeBatch(db);
     batch.update(doc(db, 'clients', clientId), {
       status: 'ACTIVE',
@@ -488,7 +549,7 @@ export async function adminApproveClient(clientId: string): Promise<void> {
       batch.set(usedRef, {
         utr: rawUtr,
         clientId,
-        amount: PLATFORM_OWNER_CONFIG.lifetimeFeeInr,
+        amount: alertAmount,
         activatedAt: nowIso,
         createdAt: serverTimestamp(),
       });
@@ -503,6 +564,16 @@ export async function adminApproveClient(clientId: string): Promise<void> {
 
     try {
       await batch.commit();
+      const approvedClient = await getClientAccountOnce(clientId);
+      if (approvedClient?.gatewayConfig) {
+        await syncPublicGatewayDoc({
+          slug: approvedClient.slug,
+          clientId: approvedClient.id,
+          entityName: approvedClient.entityName,
+          config: approvedClient.gatewayConfig,
+          active: true,
+        });
+      }
       return;
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, docPath);
@@ -516,6 +587,16 @@ export async function adminApproveClient(clientId: string): Promise<void> {
       rejectedReason: deleteField(),
       updatedAt: serverTimestamp(),
     });
+    const approvedClient = await getClientAccountOnce(clientId);
+    if (approvedClient?.gatewayConfig) {
+      await syncPublicGatewayDoc({
+        slug: approvedClient.slug,
+        clientId: approvedClient.id,
+        entityName: approvedClient.entityName,
+        config: approvedClient.gatewayConfig,
+        active: true,
+      });
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, docPath);
   }
@@ -677,7 +758,7 @@ export async function ingestFamPayAlertFromAdmin(input: {
 
   // Check if a client is currently PENDING_VERIFICATION with this exact UTR
   let pendingClient: ClientAccount | null = null;
-  if (input.amount === expectedFee) {
+  if (input.amount >= expectedFee) {
     const q = query(collection(db, 'clients'), where('activationUtr', '==', cleanedUtr));
     const snap = await getDocs(q);
     for (const d of snap.docs) {
@@ -689,7 +770,7 @@ export async function ingestFamPayAlertFromAdmin(input: {
     }
   }
 
-  if (input.amount === expectedFee && pendingClient) {
+  if (input.amount >= expectedFee && pendingClient) {
     const batch = writeBatch(db);
     if (existingAlertSnap.exists()) {
       batch.update(alertRef, {
@@ -713,7 +794,7 @@ export async function ingestFamPayAlertFromAdmin(input: {
     batch.set(usedRef, {
       utr: cleanedUtr,
       clientId: pendingClient.id,
-      amount: expectedFee,
+      amount: input.amount,
       activatedAt: nowIso,
       createdAt: serverTimestamp(),
     });
@@ -733,14 +814,14 @@ export async function ingestFamPayAlertFromAdmin(input: {
           status: 'ACTIVE',
           activatedAt: nowIso,
         },
-        message: `Exact ₹${expectedFee} match found! Automatically activated ${pendingClient.entityName} (${pendingClient.email}) and locked UTR ${cleanedUtr} in used_utrs.`,
+        message: `Verified ₹${input.amount} match found! Automatically activated ${pendingClient.entityName} (${pendingClient.email}) for UTR ${cleanedUtr}.`,
       };
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `fampay_alerts/${cleanedUtr}`);
     }
   }
 
-  // Save unmatched alert for instant auto-confirm when client submits UTR (only exact fee eligible)
+  // Save unmatched alert for instant auto-confirm when client submits UTR
   if (!existingAlertSnap.exists()) {
     try {
       await setDoc(alertRef, {
@@ -757,18 +838,18 @@ export async function ingestFamPayAlertFromAdmin(input: {
     }
   }
 
-  if (input.amount !== expectedFee) {
+  if (input.amount < expectedFee) {
     return {
       matched: false,
       autoActivatedClient: null,
-      message: `Saved alert to fampay_alerts with amount ₹${input.amount}, but Amount Lock prevented auto-activation (exact ₹${expectedFee} required).`,
+      message: `Saved alert to fampay_alerts with amount ₹${input.amount} (minimum ₹${expectedFee} required for auto-activation).`,
     };
   }
 
   return {
     matched: false,
     autoActivatedClient: null,
-    message: `Saved verified ₹${expectedFee} alert (${cleanedUtr}) to fampay_alerts. The next matching client submitting this UTR will unlock instantly.`,
+    message: `Saved verified ₹${input.amount} alert (${cleanedUtr}) to fampay_alerts. Any client submitting this UTR will unlock instantly.`,
   };
 }
 
@@ -819,6 +900,40 @@ export function getClients(): ClientAccount[] {
 export function getClientBySlug(slug: string): ClientAccount | null {
   const normalized = slug.trim().toLowerCase();
   return getClients().find((c) => c.slug.toLowerCase() === normalized) ?? null;
+}
+
+export async function getPublicGatewayBySlug(slug: string): Promise<ClientAccount | null> {
+  const normalized = slug.trim().toLowerCase();
+  if (/^[a-z0-9-]+$/.test(normalized)) {
+    try {
+      const snap = await getDoc(doc(db, 'public_gateways', normalized));
+      if (snap.exists()) {
+        const d = snap.data() as Record<string, unknown>;
+        return {
+          id: String(d.clientId || ''),
+          uid: String(d.clientId || ''),
+          merchantCode: '',
+          slug: String(d.slug || normalized),
+          fullName: '',
+          entityName: String(d.entityName || 'Merchant'),
+          email: '',
+          status: d.active === true ? 'ACTIVE' : 'PENDING_VERIFICATION',
+          gatewayConfig: {
+            upiId: String(d.upiId || ''),
+            payeeName: String(d.payeeName || d.entityName || 'Merchant'),
+            accentColor: String(d.accentColor || '#0F766E'),
+            redirectUrl: typeof d.redirectUrl === 'string' ? d.redirectUrl : undefined,
+            staticQrDataUrl: typeof d.staticQrDataUrl === 'string' ? d.staticQrDataUrl : undefined,
+          },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    } catch {
+      // Fallback to local cache if unavailable
+    }
+  }
+  return getClientBySlug(slug);
 }
 
 export function getOrders(): CustomerOrder[] {

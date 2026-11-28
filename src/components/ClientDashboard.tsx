@@ -8,7 +8,6 @@ import {
   Eye,
   EyeOff,
   ImagePlus,
-  Lock,
   QrCode,
   Settings2,
   ShieldCheck,
@@ -86,6 +85,7 @@ export function ClientDashboard({
   const [activationAppUtr, setActivationAppUtr] = useState('');
   const [activationError, setActivationError] = useState('');
   const [submittingActivation, setSubmittingActivation] = useState(false);
+  const [makeFurtherPayment, setMakeFurtherPayment] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string>('');
 
   const copyText = (key: string, value: string) => {
@@ -212,6 +212,9 @@ export function ClientDashboard({
     setSubmittingActivation(true);
     try {
       await submitActivationUtr(client.id, check.cleaned);
+      setMakeFurtherPayment(false);
+      setActivationPayStep('choose');
+      setActivationUtr('');
       onRefresh();
     } catch (err) {
       setActivationError(err instanceof Error ? err.message : 'Failed to submit UTR.');
@@ -233,6 +236,9 @@ export function ClientDashboard({
     setSubmittingActivation(true);
     try {
       await submitActivationUtr(client.id, check.cleaned);
+      setMakeFurtherPayment(false);
+      setActivationPayStep('choose');
+      setActivationAppUtr('');
       onRefresh();
     } catch (err) {
       setActivationError(err instanceof Error ? err.message : 'Failed to confirm payment.');
@@ -241,14 +247,13 @@ export function ClientDashboard({
     }
   };
 
-  const navItems: { id: DashboardTab; label: string; icon: typeof Settings2; locked?: boolean }[] = [
+  const navItems: { id: DashboardTab; label: string; icon: typeof Settings2 }[] = [
     { id: 'setup', label: 'Gateway Setup', icon: Settings2 },
-    { id: 'activation', label: `Lifetime License (₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr})`, icon: CreditCard },
+    { id: 'activation', label: `Pay & Activate (₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr})`, icon: CreditCard },
     {
       id: 'gateway',
       label: 'Personalized Gateway',
       icon: ShieldCheck,
-      locked: client.status !== 'ACTIVE' && client.status !== 'PENDING_VERIFICATION',
     },
   ];
 
@@ -285,7 +290,6 @@ export function ClientDashboard({
                     <Icon className="w-4 h-4 shrink-0" />
                     <span className="truncate">{item.label}</span>
                   </span>
-                  {item.locked && <Lock className="w-3.5 h-3.5 opacity-60 shrink-0" />}
                 </button>
               );
             })}
@@ -533,10 +537,17 @@ export function ClientDashboard({
 
           {activeTab === 'activation' && (
             <>
-              {client.status === 'ACTIVE' || client.status === 'PENDING_VERIFICATION' ? (
+              {(client.status === 'ACTIVE' || client.status === 'PENDING_VERIFICATION') && !makeFurtherPayment ? (
                 <ConciergeGatewayCard
                   client={client}
                   onGoToSetup={() => setActiveTab('setup')}
+                  onMakeFurtherPayment={() => {
+                    setActivationUtr('');
+                    setActivationAppUtr('');
+                    setActivationError('');
+                    setActivationPayStep('choose');
+                    setMakeFurtherPayment(true);
+                  }}
                   onRefresh={onRefresh}
                 />
               ) : (
@@ -544,13 +555,26 @@ export function ClientDashboard({
                   <div className="pb-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
                       <h1 className="font-display text-xl font-bold text-slate-900">
-                        ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Lifetime Gateway Activation
+                        {makeFurtherPayment
+                          ? `Further UPI Payment (₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr})`
+                          : `₹${PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Lifetime Gateway Activation`}
                       </h1>
                       <p className="text-sm text-slate-500 mt-1">
-                        Complete the one-time ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} payment and our team will contact you soon with your personalized payment gateway.
+                        Complete the ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} payment and submit your UTR reference below.
                       </p>
                     </div>
-                    <ClientStatusLabel status={client.status} />
+                    <div className="flex items-center gap-3">
+                      {makeFurtherPayment && (
+                        <button
+                          type="button"
+                          onClick={() => setMakeFurtherPayment(false)}
+                          className="text-xs font-semibold text-slate-600 hover:text-slate-900 underline underline-offset-4 cursor-pointer"
+                        >
+                          Back to Gateway Status
+                        </button>
+                      )}
+                      <ClientStatusLabel status={client.status} />
+                    </div>
                   </div>
 
                   {!client.gatewayConfig && (
@@ -852,23 +876,31 @@ export function ClientDashboard({
                 <ConciergeGatewayCard
                   client={client}
                   onGoToSetup={() => setActiveTab('setup')}
+                  onMakeFurtherPayment={() => {
+                    setActivationUtr('');
+                    setActivationAppUtr('');
+                    setActivationError('');
+                    setActivationPayStep('choose');
+                    setMakeFurtherPayment(true);
+                    setActiveTab('activation');
+                  }}
                   onRefresh={onRefresh}
                 />
               ) : (
                 <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-4">
-                  <Lock className="w-8 h-8 text-slate-400 mx-auto" />
+                  <ShieldCheck className="w-8 h-8 text-teal-700 mx-auto" />
                   <h2 className="font-display text-lg font-bold text-slate-900">
-                    Personalized Gateway Locked Until Payment
+                    Complete ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Payment for Personalized Gateway
                   </h2>
                   <p className="text-sm text-slate-600 max-w-md mx-auto">
-                    Complete the one-time ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} lifetime payment and our team will contact you soon with your personalized payment gateway.
+                    Complete the ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} payment and submit your UTR so our team can deliver your personalized payment gateway.
                   </p>
                   <button
                     type="button"
                     onClick={() => setActiveTab('activation')}
                     className="px-5 py-2.5 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                   >
-                    Go to ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Activation
+                    Proceed to ₹{PLATFORM_OWNER_CONFIG.lifetimeFeeInr} Payment
                   </button>
                 </div>
               )}
